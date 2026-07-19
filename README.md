@@ -1,6 +1,3 @@
-# Flowscope
-Reverse-engineering diagram tool — point it at source code and it generates interactive diagrams.
-
 # FlowScope Web
 
 **Reverse-engineering diagram tool — point it at source code and it generates interactive diagrams.**
