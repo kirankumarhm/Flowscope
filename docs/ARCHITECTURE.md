@@ -75,7 +75,7 @@ it spans Java and Node/TypeScript uniformly:
 
 ## Extensibility
 
-- **New language:** implement `com.flowscope.lang.Extractor`, register a `LanguageSpec` in
+- **New language:** implement `com.flowscope.service.Extractor`, register a `LanguageSpec` in
   `LanguageConfig`. IR, walker, and CFG models are language-neutral.
 - **New comm type in the Service Map:** add a scan + resolver pass in `ServiceMapBuilder`;
   `ConfigIndex` already handles name indirection.
