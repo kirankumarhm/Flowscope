@@ -1,0 +1,13 @@
+# Java / Maven
+target/
+*.class
+
+# Node / Vite (frontend)
+node_modules/
+dist/
+
+# Editors / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
