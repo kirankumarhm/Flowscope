@@ -5,6 +5,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import com.flowscope.dto.ErrorResponse;
 
 /**
@@ -38,6 +39,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ApiExceptions.MemoryExceededException.class)
     public ResponseEntity<ErrorResponse> memory(ApiExceptions.MemoryExceededException e) {
         return json(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> noRoute(NoResourceFoundException e) {
+        return json(HttpStatus.NOT_FOUND, "no such endpoint: " + e.getResourcePath());
     }
 
     @ExceptionHandler(Exception.class)

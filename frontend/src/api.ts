@@ -9,6 +9,11 @@ import type {
   ServiceMap,
 } from './types';
 
+// Base URL for the backend REST API. Empty by default so requests stay
+// relative and the Vite dev server proxies /api -> :8080. In production the
+// SPA is served separately, so point it at the backend with VITE_API_BASE_URL.
+axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL ?? '';
+
 /**
  * Analyze a source directory. Calls GET /api/analyze?path=<encoded>.
  * On failure, throws an Error whose message is the backend `error` field
