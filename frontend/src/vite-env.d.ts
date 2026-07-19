@@ -1,5 +1,12 @@
 /// <reference types="vite/client" />
 
+// Custom Vite env vars (exposed on import.meta.env, must be VITE_-prefixed).
+interface ImportMetaEnv {
+  // Backend REST API base URL for production builds; empty/undefined in dev
+  // (requests stay relative and go through the Vite proxy).
+  readonly VITE_API_BASE_URL?: string;
+}
+
 // cytoscape-dagre ships without bundled type declarations and there is no
 // @types/cytoscape-dagre package in use, so declare the module here.
 // The extension is a registration function accepted by cytoscape.use().
