@@ -23,31 +23,46 @@ code and stay true to it.
 
 ## Quick start
 
-**Prerequisites:** JDK 21+, Maven, and Node 22 (for building the frontend).
+The backend (REST API) and frontend (web UI) are **independent projects** — build and
+run them separately.
+
+**Prerequisites:** JDK 21+, Maven, and Node 22.
 
 ```bash
-# 1. Build the frontend bundle
-cd frontend && npm install && npm run build && cd ..
-
-# 2. Package the backend with the pre-built SPA
-mvn clean package -DskipFrontendBuild=true
-
-# 3. Run
+# 1. Backend — pure REST API on :8080
+mvn -f backend/pom.xml clean package
 java -jar backend/target/flowscope-web.jar
+
+# 2. Frontend — Vite dev server on :5173 (in a second terminal)
+cd frontend
+npm install
+npm run dev            # proxies /api → :8080
 ```
 
-Open **<http://localhost:8080>**, paste an absolute source directory, and click **Analyze**.
+Open **<http://localhost:5173>**, paste an absolute source directory, and click **Analyze**.
 
 - Single application → use **Flow Chart / Sequence / Component / Architecture**.
 - A folder that *contains* multiple services → use **Service Map**.
 
-> **Networked build:** if the machine can reach `nodejs.org`, a plain `mvn clean package`
-> self-provisions Node and builds the frontend for you. On restricted networks, use the
-> two-step build above (`-DskipFrontendBuild=true` packages the pre-built `frontend/dist/`).
+> **Backend on a different port?** Start it with `PORT=8097 java -jar …` and point the
+> dev proxy at it: `VITE_PROXY_TARGET=http://localhost:8097 npm run dev`.
 
-### Interactive docs & health
+### Production build
 
-Once running:
+```bash
+# Backend jar (API only — does not serve the UI)
+mvn -f backend/pom.xml clean package
+
+# Frontend static bundle → frontend/dist/, deploy behind any static host
+cd frontend && npm run build
+```
+
+For production the SPA calls the API cross-origin, so set:
+
+- `VITE_API_BASE_URL` (frontend build) → the backend's public URL.
+- `flowscope.cors.allowed-origins` (backend) → the frontend's origin(s).
+
+### Interactive docs & health (on the backend)
 
 | URL | What |
 |-----|------|
@@ -87,24 +102,26 @@ Source dir ─► FileWalker ─► ParserEngine ─► JavaProgramModel / IRBui
                  symlink-safe)                    resolution, cached)
 ```
 
-| Concern | Where |
-|---|---|
-| IR + CFG model | `com.flowscope.ir.*` (`Graph`, `IRNode`, `IREdge`, `CFG`, `SequenceDiagram`) |
-| Language registry / seam | `com.flowscope.lang.*` (`LanguageRegistry`, `LanguageSpec`, `Extractor`) |
-| File discovery | `com.flowscope.ingest.*` (`DefaultFileWalker`, `ProjectRoots` multi-module detection) |
-| Java parsing & whole-program model | `com.flowscope.extract.*` (`JavaExtractor`, `JavaProgramModel`, `JavaCfgBuilder`, `JavaFlowBuilder`, `JavaSequenceBuilder`) |
-| Component diagram | `com.flowscope.component.*` (`ComponentMapBuilder`) |
-| Architecture diagram | `com.flowscope.architecture.*` (`ArchitectureBuilder`) |
-| Service Map | `com.flowscope.servicemap.*` (`WorkspaceScanner`, `ConfigIndex`, `ServiceMapBuilder`) |
-| REST API + error handling | `com.flowscope.api.*` (controllers, services, `GlobalExceptionHandler`) |
-| OpenAPI / config | `com.flowscope.config.OpenApiConfig` |
-| Frontend | `frontend/src/` — one `*View.tsx` per diagram, `api.ts`, `types.ts` |
+The backend follows a standard Spring **layered package** structure under `com.flowscope`:
+
+| Layer | Package | Contents |
+|---|---|---|
+| Controllers | `controller` | the 6 REST controllers |
+| Services | `service` | `*Service` plus all builders/engines/registries/scanners (`JavaExtractor`, `IRBuilder`, `ComponentMapBuilder`, `ArchitectureBuilder`, `WorkspaceScanner`, `ConfigIndex`, `ServiceMapBuilder`, …) |
+| Domain model | `entity` | `JavaProgramModel`, `Graph`, `IRNode`, `IREdge`, `CFG`, enums, `SourceFile`, `LanguageSpec`, … |
+| API responses | `dto` | `Architecture`, `ComponentMap`, `ServiceMap`, `SequenceDiagram`, `ErrorResponse` |
+| Error handling | `exception` | `GlobalExceptionHandler`, `ApiExceptions` |
+| Configuration | `config` | `OpenApiConfig`, `LanguageConfig`, `CorsConfig` |
+| Utilities | `util` | `TextUtil`, `SpringEndpoints` |
+| Frontend | `frontend/src/` | one `*View.tsx` per diagram, `api.ts`, `types.ts` |
+
+`FlowScopeApplication` sits at the `com.flowscope` root (Spring component-scan base).
 
 See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for design detail and **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for the production checklist.
 
 ### Extending to a new language
 
-Implement `Extractor` and register a `LanguageSpec` in `com.flowscope.lang.LanguageConfig`.
+Implement `Extractor` and register a `LanguageSpec` in `com.flowscope.config.LanguageConfig`.
 The walker, IR, and CFG models are language-neutral and need no changes. The Service
 Map's comm extraction is pattern-based and already spans Java + Node/TypeScript.
 
@@ -118,6 +135,7 @@ overridden by environment variables or JVM args (standard Spring Boot relaxed bi
 | Property | Default | Notes |
 |---|---|---|
 | `PORT` / `server.port` | `8080` | HTTP port |
+| `flowscope.cors.allowed-origins` | `http://localhost:5173` | Comma-separated browser origins allowed to call `/api/**` |
 | `spring.mvc.async.request-timeout` | `190000` | Cap for slow workspace scans (ms) |
 | `management.endpoints.web.exposure.include` | `health,info,metrics` | Exposed actuator endpoints |
 | `server.compression.enabled` | `true` | Gzip large JSON payloads |
@@ -131,14 +149,17 @@ Analysis guards (in `AnalysisService` / `ServiceMapService`): 120 s per-analysis
 ## Frontend dev loop
 
 ```bash
-# backend on :8080, then:
+# with the backend running on :8080:
 cd frontend && npm install && npm run dev   # Vite on :5173, proxies /api → :8080
 ```
+
+The dev proxy avoids CORS in development. Override the target with
+`VITE_PROXY_TARGET` when the backend runs on another port.
 
 ---
 
 ## Development notes
 
-- **Backend only, fast:** `mvn -o -pl backend compile` (offline; all deps are cached).
+- **Backend compile (offline, fast):** `mvn -o -f backend/pom.xml compile` (all deps cached).
 - **Type-check the frontend:** `cd frontend && npm run typecheck`.
-- After a frontend rebuild, **hard-refresh** the browser (Cmd/Ctrl+Shift+R) to drop the stale bundle.
+- Backend and frontend are decoupled: the jar is an API only and does not serve the UI.

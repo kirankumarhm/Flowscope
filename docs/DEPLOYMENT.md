@@ -1,15 +1,22 @@
 # FlowScope — Deployment & Production Checklist
 
+The backend (REST API) and frontend (static SPA) are **independent deployables**.
+
 ## Build
 
 ```bash
-cd frontend && npm ci && npm run build && cd ..
-mvn clean package -DskipFrontendBuild=true
+# Backend — API-only executable JAR
+mvn -f backend/pom.xml clean package
+
+# Frontend — static bundle in frontend/dist/
+cd frontend && npm ci && VITE_API_BASE_URL=https://api.example.com npm run build
 ```
 
 Artifacts:
-- `backend/target/flowscope-web.jar` — self-contained executable JAR (bundled SPA + API).
+- `backend/target/flowscope-web.jar` — executable JAR, **API only** (does not serve the UI).
 - `build-info.properties` is generated into the JAR for `/actuator/info`.
+- `frontend/dist/` — static assets to serve from any web server / CDN. Set
+  `VITE_API_BASE_URL` at build time to the backend's public URL.
 
 ## Run
 
@@ -29,7 +36,9 @@ EXPOSE 8080
 ENTRYPOINT ["java","-jar","/app.jar"]
 ```
 
-Build the JAR first (frontend + backend), then `docker build`.
+Build the JAR first (`mvn -f backend/pom.xml clean package`), then `docker build`. This
+image serves the API only; deploy `frontend/dist/` separately (static host / CDN) and set
+`flowscope.cors.allowed-origins` to the frontend's origin.
 
 ## Configuration
 
@@ -39,6 +48,7 @@ Common ones:
 | Env / property | Default | Notes |
 |---|---|---|
 | `PORT` | `8080` | HTTP port |
+| `FLOWSCOPE_CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated origins allowed to call `/api/**` |
 | `JAVA_TOOL_OPTIONS` / `-Xmx` | JVM default | Allow ≥ 2 GB heap for large codebases |
 | `SPRING_MVC_ASYNC_REQUEST_TIMEOUT` | `190000` | ms; raise for very large workspaces |
 | `MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE` | `health,info,metrics` | Actuator surface |
@@ -61,7 +71,8 @@ readinessProbe: { httpGet: { path: /actuator/health/readiness, port: 8080 } }
 
 ## Production checklist
 
-- [x] **Executable JAR** with embedded server and bundled SPA — single artifact.
+- [x] **Executable JAR** (API only) with embedded server; SPA deployed separately as static assets.
+- [x] **Configurable CORS** (`flowscope.cors.allowed-origins`) for the separately-hosted SPA.
 - [x] **Health / info / metrics** via Actuator (k8s probes enabled).
 - [x] **OpenAPI 3 + Swagger UI** for API discoverability.
 - [x] **Graceful shutdown** (`server.shutdown=graceful`) drains in-flight requests.
