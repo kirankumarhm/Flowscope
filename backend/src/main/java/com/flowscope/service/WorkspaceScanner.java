@@ -74,7 +74,22 @@ public final class WorkspaceScanner {
             }
             collect(workspace, dir, services);
         }
+        // Fallback: the given path may itself be a single application directory
+        // rather than a workspace of many (e.g. the user pointed at cm-admin-api
+        // instead of its parent). Discovering nothing from the children while the
+        // directory itself carries a build manifest means exactly that — treat it
+        // as a one-service workspace so its Kafka/REST/datastore usage still shows.
+        if (services.isEmpty() && isServiceDir(workspace)) {
+            Path base = workspace.getParent() != null ? workspace.getParent() : workspace;
+            collect(base, workspace, services);
+        }
         return services;
+    }
+
+    /** True when {@code dir} itself is a buildable service (Maven or Node). */
+    private static boolean isServiceDir(Path dir) {
+        return Files.isRegularFile(dir.resolve("pom.xml"))
+                || Files.isRegularFile(dir.resolve("package.json"));
     }
 
     /** Classify {@code dir}: a leaf service, or a Maven aggregator to expand. */

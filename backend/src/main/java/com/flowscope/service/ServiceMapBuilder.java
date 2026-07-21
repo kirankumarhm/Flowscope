@@ -72,6 +72,21 @@ public final class ServiceMapBuilder {
             "topics\\s*=\\s*(\\{[^}]*}|\"[^\"]*\"|#\\{[^}]*}[^,)]*|[A-Za-z0-9_.]+)");
     private static final Pattern NODE_TOPIC_RE = Pattern.compile(
             "topic\\s*:\\s*(\"[^\"]*\"|'[^']*'|[A-Za-z0-9_.]+)");
+    // Node services rarely inline the topic; they bind it to a local const / class
+    // field first: `const kafkaTopic = process.env.KAFKA_TOPIC` or
+    // `this.kafkaTopic = process.env.KAFKA_TOPIC_MSO`, then reference `topic: kafkaTopic`.
+    // Capture ident -> env-var so a topic token can be chased back to config.
+    private static final Pattern NODE_ENV_BIND_RE = Pattern.compile(
+            "(?:(?:const|let|var)\\s+|this\\.)(\\w+)\\s*(?::\\s*[\\w<>\\[\\], ]+?)?\\s*=\\s*process\\.env\\.(\\w+)");
+    // A Lambda handler typed with one of these aws-lambda events is triggered by a
+    // Kafka event-source mapping — i.e. it CONSUMES a topic. The topic itself is set
+    // by the (external) event-source mapping, not the code, so it isn't recoverable
+    // here; we record the service as an external-Kafka consumer instead.
+    private static final Pattern LAMBDA_KAFKA_EVENT_RE = Pattern.compile(
+            ":\\s*(?:SelfManagedKafkaEvent|MSKEvent|KafkaEvent)\\b");
+    /** Node id + label for the shared "external Kafka source" node. */
+    private static final String EXT_KAFKA_ID = "ext:self-managed-kafka";
+    private static final String EXT_KAFKA_LABEL = "Self-managed Kafka (event source)";
 
     private ServiceMapBuilder() {
     }
@@ -90,6 +105,8 @@ public final class ServiceMapBuilder {
         // datastore kind -> set of resource names
         final Map<String, Set<String>> stores = new LinkedHashMap<>();
         boolean writesData;
+        // Consumes Kafka via a Lambda event-source mapping (topic set externally).
+        boolean consumesExternalKafka;
 
         Scan(Service svc, ConfigIndex cfg) {
             this.svc = svc;
@@ -133,6 +150,9 @@ public final class ServiceMapBuilder {
                 ext.add(extName);
             }
         }
+        if (scan.consumesExternalKafka) {
+            ext.add(EXT_KAFKA_LABEL);
+        }
         return new ServiceComms(scan.produces, scan.consumes, scan.stores, new ArrayList<>(ext));
     }
 
@@ -165,7 +185,7 @@ public final class ServiceMapBuilder {
         for (Scan sc : scans) {
             Service s = sc.svc;
             boolean isolated = sc.produces.isEmpty() && sc.consumes.isEmpty()
-                    && sc.hosts.isEmpty() && sc.stores.isEmpty();
+                    && sc.hosts.isEmpty() && sc.stores.isEmpty() && !sc.consumesExternalKafka;
             if (s.library && isolated) {
                 continue;
             }
@@ -201,6 +221,18 @@ public final class ServiceMapBuilder {
                 edges.add(new Edge(edgeId("topic:" + topic, svcId(sc.svc), "consumes"),
                         "topic:" + topic, svcId(sc.svc), "consumes", topic));
             }
+        }
+
+        // Kafka-consumer Lambdas: consumed topic is set by the (external) event-source
+        // mapping, not the code, so wire them to a shared external Kafka source node.
+        for (Scan sc : scans) {
+            if (!sc.consumesExternalKafka || !nodes.containsKey(svcId(sc.svc))) {
+                continue;
+            }
+            nodes.putIfAbsent(EXT_KAFKA_ID, new Node(EXT_KAFKA_ID, EXT_KAFKA_LABEL, "external", "kafka",
+                    null, null, Map.of("kind", "External Kafka event source")));
+            edges.add(new Edge(edgeId(EXT_KAFKA_ID, svcId(sc.svc), "consumes"),
+                    EXT_KAFKA_ID, svcId(sc.svc), "consumes", "event-source mapping"));
         }
 
         // Datastore nodes + edges (oriented by the service's read/write posture).
@@ -296,12 +328,19 @@ public final class ServiceMapBuilder {
                     }
                 }
             } else if (node) {
+                // A Kafka-triggered Lambda consumes its topic via an event-source
+                // mapping; the topic name lives in external infra, so we flag the
+                // service as an external-Kafka consumer rather than a topic edge.
+                if (LAMBDA_KAFKA_EVENT_RE.matcher(text).find()) {
+                    scan.consumesExternalKafka = true;
+                }
                 boolean consumer = text.contains(".subscribe(") || text.contains("eachMessage")
                         || text.contains("createConsumer");
                 boolean producer = text.contains("producer") || text.contains(".send(");
+                Map<String, String> envBinds = nodeEnvBindings(text);
                 Matcher m = NODE_TOPIC_RE.matcher(text);
                 while (m.find()) {
-                    for (String t : scan.cfg.resolve(m.group(1))) {
+                    for (String t : resolveNodeTopic(scan.cfg, m.group(1), envBinds)) {
                         if (!looksLikeTopic(t)) {
                             continue;
                         }
@@ -397,6 +436,35 @@ public final class ServiceMapBuilder {
     }
 
     // --- resolution helpers ------------------------------------------------
+
+    /** Map local const/field names to the {@code process.env.*} var they are bound to. */
+    private static Map<String, String> nodeEnvBindings(String text) {
+        Map<String, String> binds = new HashMap<>();
+        Matcher m = NODE_ENV_BIND_RE.matcher(text);
+        while (m.find()) {
+            binds.putIfAbsent(m.group(1), m.group(2));
+        }
+        return binds;
+    }
+
+    /**
+     * Resolve a Node {@code topic:} reference. Tries direct resolution first
+     * (literal, {@code process.env.X}, config key); if that yields nothing and the
+     * token is a local variable bound to an env var, chase it back to config.
+     */
+    private static List<String> resolveNodeTopic(ConfigIndex cfg, String token, Map<String, String> envBinds) {
+        List<String> out = cfg.resolve(token);
+        if (!out.isEmpty()) {
+            return out;
+        }
+        String simple = token.trim();
+        int dot = simple.lastIndexOf('.'); // this.kafkaTopic -> kafkaTopic
+        if (dot >= 0) {
+            simple = simple.substring(dot + 1);
+        }
+        String envVar = envBinds.get(simple);
+        return envVar != null ? cfg.resolve("process.env." + envVar) : out;
+    }
 
     private static List<String> resolveTopicsAttr(ConfigIndex cfg, String attr) {
         // attr may be {A, B}, "literal", #{'${prop:def}'.split(',')}, or IDENT.
