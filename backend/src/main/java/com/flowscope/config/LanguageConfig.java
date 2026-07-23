@@ -1,6 +1,8 @@
 package com.flowscope.config;
 
+import com.flowscope.service.GoExtractor;
 import com.flowscope.service.JavaExtractor;
+import com.flowscope.service.PythonExtractor;
 import java.util.Set;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,6 +23,8 @@ public class LanguageConfig {
     public LanguageRegistry languageRegistry() {
         LanguageRegistry registry = new InMemoryLanguageRegistry();
         registry.register(new LanguageSpec("java", Set.of(".java"), new JavaExtractor()));
+        registry.register(new LanguageSpec("go", Set.of(".go"), new GoExtractor()));
+        registry.register(new LanguageSpec("python", Set.of(".py"), new PythonExtractor()));
         return registry;
     }
 }
