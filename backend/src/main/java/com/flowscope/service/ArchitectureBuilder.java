@@ -37,8 +37,15 @@ public final class ArchitectureBuilder {
     }
 
     public static Architecture build(String project, JavaProgramModel model, Path appDir) {
-        ComponentMap cm = ComponentMapBuilder.build(project, model);
+        return build(project, ComponentMapBuilder.build(project, model), appDir);
+    }
 
+    /**
+     * Aggregate an already-built {@link ComponentMap} (from any language) into the
+     * layered architecture view + external resources. Used directly for Go/Python,
+     * whose components come from {@link TreeSitterComponentBuilder}.
+     */
+    public static Architecture build(String project, ComponentMap cm, Path appDir) {
         // Layer -> class count.
         Map<String, Integer> layerCount = new LinkedHashMap<>();
         Map<String, String> classLayer = new LinkedHashMap<>();
