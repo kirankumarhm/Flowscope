@@ -5,6 +5,7 @@ import dagre from 'cytoscape-dagre';
 import svg from 'cytoscape-svg';
 import { jsPDF } from 'jspdf';
 import type { ServiceMap, SmNode } from '../types';
+import { cyToDrawioXml } from '../drawio';
 
 cytoscape.use(dagre);
 cytoscape.use(svg);
@@ -16,7 +17,7 @@ interface ServiceMapViewProps {
   filename?: string;
 }
 
-type ExportFormat = 'png' | 'svg' | 'pdf';
+type ExportFormat = 'png' | 'svg' | 'pdf' | 'drawio';
 const EXPORT_SCALE = 2;
 const EXPORT_BG = '#ffffff';
 
@@ -30,8 +31,13 @@ const NODE_STYLES: Record<string, Style> = {
   'spring-boot': { color: '#2563eb', shape: 'round-rectangle', glyph: '☕' },
   'node-lambda': { color: '#f59e0b', shape: 'round-rectangle', glyph: 'λ' },
   'node-service': { color: '#0ea5e9', shape: 'round-rectangle', glyph: '⬡' },
+  nestjs: { color: '#e0234e', shape: 'round-rectangle', glyph: '🐈' },
+  nextjs: { color: '#0f172a', shape: 'round-rectangle', glyph: '▲' },
+  'go-service': { color: '#00add8', shape: 'round-rectangle', glyph: '🐹' },
+  'python-service': { color: '#3776ab', shape: 'round-rectangle', glyph: '🐍' },
   react: { color: '#8b5cf6', shape: 'round-rectangle', glyph: '⚛' },
   library: { color: '#94a3b8', shape: 'round-rectangle', glyph: '⚙' },
+  grpc: { color: '#0891b2', shape: 'cut-rectangle', glyph: '📡' },
   kafka: { color: '#10b981', shape: 'hexagon', glyph: '📨' },
   dynamodb: { color: '#0d9488', shape: 'barrel', glyph: '🗄' },
   s3: { color: '#ca8a04', shape: 'barrel', glyph: '🪣' },
@@ -46,6 +52,7 @@ const EDGE_COLORS: Record<string, string> = {
   produces: '#10b981',
   consumes: '#2563eb',
   rest: '#6366f1',
+  grpc: '#0891b2',
   writes: '#e11d48',
   reads: '#0d9488',
 };
@@ -265,6 +272,13 @@ export default function ServiceMapView({ map, loading, error, filename = 'servic
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       return;
     }
+    if (format === 'drawio') {
+      const blob = new Blob([cyToDrawioXml(cy)], { type: 'application/xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      triggerDownload(url, `${base}.drawio`);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return;
+    }
     const dataUrl = cy.png({ full: true, scale: EXPORT_SCALE, bg: EXPORT_BG });
     const img = new Image();
     img.onload = () => {
@@ -333,6 +347,7 @@ export default function ServiceMapView({ map, loading, error, filename = 'servic
               <button type="button" onClick={() => doExport('png')}>PNG</button>
               <button type="button" onClick={() => doExport('svg')}>SVG</button>
               <button type="button" onClick={() => doExport('pdf')}>PDF</button>
+              <button type="button" onClick={() => doExport('drawio')}>draw.io</button>
             </div>
           )}
         </div>
@@ -362,7 +377,12 @@ const LEGEND: { key: string; label: string }[] = [
   { key: 'spring-boot', label: 'Spring Boot' },
   { key: 'node-lambda', label: 'Lambda (Node)' },
   { key: 'node-service', label: 'Node service' },
+  { key: 'nestjs', label: 'NestJS' },
+  { key: 'nextjs', label: 'Next.js' },
+  { key: 'go-service', label: 'Go service' },
+  { key: 'python-service', label: 'Python service' },
   { key: 'react', label: 'UI (React)' },
+  { key: 'grpc', label: 'gRPC service' },
   { key: 'kafka', label: 'Kafka topic' },
   { key: 'dynamodb', label: 'DynamoDB' },
   { key: 's3', label: 'S3 bucket' },

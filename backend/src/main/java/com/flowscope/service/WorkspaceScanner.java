@@ -13,8 +13,11 @@ import java.util.stream.Stream;
 
 /**
  * Discovers the individual applications ("services") in a workspace directory,
- * across languages. A service is a directory holding a recognised build manifest
- * ({@code pom.xml} for Java/Maven, {@code package.json} for Node/TypeScript).
+ * across languages. A service is a directory holding a recognised build manifest:
+ * {@code pom.xml} (Java/Maven), {@code package.json} (Node/TypeScript — plain
+ * Node, NestJS, or Next.js), {@code go.mod} (Go), or a Python manifest
+ * ({@code requirements.txt}, {@code pyproject.toml}, {@code setup.py},
+ * {@code Pipfile}, {@code manage.py}).
  *
  * <p>Multi-module Maven aggregators (e.g. {@code cm-platform}) are expanded into
  * their leaf modules; scaffolding ({@code service-template}), test-only modules,
@@ -26,7 +29,11 @@ public final class WorkspaceScanner {
     private static final Set<String> SKIP_DIRS = Set.of(
             "node_modules", "target", "dist", "build", "out", "coverage",
             ".git", ".idea", ".vscode", "service-template", "tests", "test",
-            "__tests__", "__mocks__", "src", "resources");
+            "__tests__", "__mocks__", "src", "resources",
+            "vendor", "venv", ".venv", "__pycache__", ".next", ".gradle");
+
+    /** How deep to descend looking for services in a monorepo (services/, apps/, …). */
+    private static final int MAX_DISCOVERY_DEPTH = 3;
 
     private WorkspaceScanner() {
     }
@@ -38,8 +45,8 @@ public final class WorkspaceScanner {
         public final String displayName; // shown on the node (the directory name)
         public final String appName;     // spring.application.name / package name (metadata)
         public final Path dir;           // absolute directory
-        public final String language;    // java | typescript | javascript
-        public final String subtype;     // spring-boot | node-lambda | node-service | react | library
+        public final String language;    // java | typescript | javascript | go | python
+        public final String subtype;     // spring-boot | node-lambda | node-service | nestjs | nextjs | react | go-service | python-service | library
         public final boolean library;
 
         Service(String id, String dirName, String displayName, String appName, Path dir,
@@ -61,19 +68,12 @@ public final class WorkspaceScanner {
      */
     public static List<Service> scan(Path workspace, Set<String> excludeDirs) {
         List<Service> services = new ArrayList<>();
-        List<Path> topLevel;
-        try (Stream<Path> s = Files.list(workspace)) {
-            topLevel = s.filter(Files::isDirectory).sorted().toList();
-        } catch (IOException e) {
-            return services;
-        }
-        for (Path dir : topLevel) {
-            String name = fileName(dir);
-            if (SKIP_DIRS.contains(name) || name.startsWith(".") || excludeDirs.contains(name)) {
-                continue;
-            }
-            collect(workspace, dir, services);
-        }
+        // Descend into the workspace looking for services. The root itself is never
+        // treated as a single service here (a monorepo root often carries its own
+        // package.json — e.g. CORTEX — which must not shadow the services nested
+        // under services/, apps/, …); the single-app fallback below handles the
+        // "user pointed straight at one app" case instead.
+        discover(workspace, workspace, services, excludeDirs, 0);
         // Fallback: the given path may itself be a single application directory
         // rather than a workspace of many (e.g. the user pointed at cm-admin-api
         // instead of its parent). Discovering nothing from the children while the
@@ -86,10 +86,54 @@ public final class WorkspaceScanner {
         return services;
     }
 
-    /** True when {@code dir} itself is a buildable service (Maven or Node). */
+    /**
+     * Recursively find services under {@code dir}. A directory that is itself a
+     * buildable service is collected and NOT descended into (so we never walk a
+     * service's own {@code internal/}, {@code cmd/}, sub-packages as separate
+     * services). Container directories (a monorepo's {@code services/}, {@code apps/})
+     * are descended up to {@link #MAX_DISCOVERY_DEPTH}. The workspace root itself
+     * ({@code depth == 0}) is always descended, never collected as one service.
+     */
+    private static void discover(Path workspace, Path dir, List<Service> out,
+                                 Set<String> excludeDirs, int depth) {
+        if (depth > 0 && isServiceDir(dir)) {
+            collect(workspace, dir, out);
+            return;
+        }
+        if (depth >= MAX_DISCOVERY_DEPTH) {
+            return;
+        }
+        List<Path> children;
+        try (Stream<Path> s = Files.list(dir)) {
+            children = s.filter(Files::isDirectory).sorted().toList();
+        } catch (IOException e) {
+            return;
+        }
+        for (Path child : children) {
+            String name = fileName(child);
+            if (SKIP_DIRS.contains(name) || name.startsWith(".")
+                    || (depth == 0 && excludeDirs.contains(name))) {
+                continue;
+            }
+            discover(workspace, child, out, excludeDirs, depth + 1);
+        }
+    }
+
+    /** True when {@code dir} itself is a buildable service (Maven/Node/Go/Python). */
     private static boolean isServiceDir(Path dir) {
         return Files.isRegularFile(dir.resolve("pom.xml"))
-                || Files.isRegularFile(dir.resolve("package.json"));
+                || Files.isRegularFile(dir.resolve("package.json"))
+                || Files.isRegularFile(dir.resolve("go.mod"))
+                || isPythonManifest(dir);
+    }
+
+    /** True when {@code dir} carries a recognised Python build/run manifest. */
+    private static boolean isPythonManifest(Path dir) {
+        return Files.isRegularFile(dir.resolve("requirements.txt"))
+                || Files.isRegularFile(dir.resolve("pyproject.toml"))
+                || Files.isRegularFile(dir.resolve("setup.py"))
+                || Files.isRegularFile(dir.resolve("Pipfile"))
+                || Files.isRegularFile(dir.resolve("manage.py"));
     }
 
     /** Classify {@code dir}: a leaf service, or a Maven aggregator to expand. */
@@ -111,6 +155,14 @@ public final class WorkspaceScanner {
             } else {
                 out.add(javaService(workspace, dir));
             }
+            return;
+        }
+        if (Files.isRegularFile(dir.resolve("go.mod"))) {
+            out.add(goService(workspace, dir));
+            return;
+        }
+        if (isPythonManifest(dir)) {
+            out.add(pythonService(workspace, dir));
         }
     }
 
@@ -132,16 +184,56 @@ public final class WorkspaceScanner {
         String json = read(pkg);
         boolean typescript = Files.isRegularFile(dir.resolve("tsconfig.json"))
                 || json.contains("typescript");
+        // Next.js pulls in React, so it must be checked before plain React.
+        boolean next = json.contains("\"next\"") || hasNextConfig(dir);
+        boolean nest = json.contains("@nestjs/") || Files.isRegularFile(dir.resolve("nest-cli.json"));
         boolean react = json.contains("\"react\"");
         boolean lambda = json.toLowerCase(Locale.ROOT).contains("lambda")
                 || json.contains("aws-lambda")
                 || Files.isRegularFile(dir.resolve("template.yaml"))
                 || Files.isRegularFile(dir.resolve("serverless.yml"));
         boolean library = dirName.contains("common") || dirName.contains("utils");
-        String subtype = react ? "react" : library ? "library" : lambda ? "node-lambda" : "node-service";
+        String subtype = next ? "nextjs"
+                : nest ? "nestjs"
+                : react ? "react"
+                : library ? "library"
+                : lambda ? "node-lambda"
+                : "node-service";
         String appName = firstNonBlank(packageName(json), dirName);
         String language = typescript ? "typescript" : "javascript";
         return new Service(rel(workspace, dir), dirName, dirName, appName, dir, language, subtype, library);
+    }
+
+    private static boolean hasNextConfig(Path dir) {
+        return Files.isRegularFile(dir.resolve("next.config.js"))
+                || Files.isRegularFile(dir.resolve("next.config.mjs"))
+                || Files.isRegularFile(dir.resolve("next.config.ts"));
+    }
+
+    private static Service goService(Path workspace, Path dir) {
+        String dirName = fileName(dir);
+        String appName = firstNonBlank(goModuleName(read(dir.resolve("go.mod"))), dirName);
+        // Go modules are kept as services (not libraries); comm-less ones are
+        // filtered out downstream by the isolated-node check anyway.
+        return new Service(rel(workspace, dir), dirName, dirName, appName, dir, "go", "go-service", false);
+    }
+
+    private static Service pythonService(Path workspace, Path dir) {
+        String dirName = fileName(dir);
+        return new Service(rel(workspace, dir), dirName, dirName, dirName, dir, "python", "python-service", false);
+    }
+
+    /** Last path segment of the {@code module <path>} line in a go.mod, or null. */
+    private static String goModuleName(String goMod) {
+        for (String raw : goMod.split("\n")) {
+            String line = raw.trim();
+            if (line.startsWith("module ")) {
+                String mod = line.substring("module ".length()).trim();
+                int slash = mod.lastIndexOf('/');
+                return slash >= 0 ? mod.substring(slash + 1) : mod;
+            }
+        }
+        return null;
     }
 
     // --- Maven helpers -----------------------------------------------------
