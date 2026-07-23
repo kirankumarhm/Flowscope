@@ -6,6 +6,7 @@ import svg from 'cytoscape-svg';
 import expandCollapse from 'cytoscape-expand-collapse';
 import { jsPDF } from 'jspdf';
 import type { CFG } from '../types';
+import { cyToDrawioXml } from '../drawio';
 import NodeDetailPanel from './NodeDetailPanel';
 import type { SelectedNode } from './NodeDetailPanel';
 
@@ -22,7 +23,7 @@ interface FlowChartViewProps {
   sourceRoot?: string; // analyzed absolute path (for resolving node file locations)
 }
 
-type ExportFormat = 'png' | 'jpg' | 'svg' | 'pdf';
+type ExportFormat = 'png' | 'jpg' | 'svg' | 'pdf' | 'drawio';
 
 const EXPORT_SCALE = 2; // crisp raster output
 const EXPORT_BG = '#ffffff';
@@ -511,6 +512,13 @@ export default function FlowChartView({
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       return;
     }
+    if (format === 'drawio') {
+      const blob = new Blob([cyToDrawioXml(cy)], { type: 'application/xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      triggerDownload(url, `${base}.drawio`);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return;
+    }
     // PDF: render the PNG into a page sized to the image.
     const dataUrl = cy.png({ full: true, scale: EXPORT_SCALE, bg: EXPORT_BG });
     const img = new Image();
@@ -575,6 +583,7 @@ export default function FlowChartView({
               <button type="button" onClick={() => doExport('jpg')}>JPG</button>
               <button type="button" onClick={() => doExport('svg')}>SVG</button>
               <button type="button" onClick={() => doExport('pdf')}>PDF</button>
+              <button type="button" onClick={() => doExport('drawio')}>draw.io</button>
             </div>
           )}
         </div>

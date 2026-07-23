@@ -52,6 +52,25 @@
             <version>3.26.2</version>
         </dependency>
 
+        <!-- tree-sitter (bonede tree-sitter-ng): Go/Python source parsing. The
+             grammar jars bundle the native lib and load it by os.arch. See the
+             feasibility spike: works under the x86_64 JVM on this arm64 host. -->
+        <dependency>
+            <groupId>io.github.bonede</groupId>
+            <artifactId>tree-sitter</artifactId>
+            <version>0.25.3</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.bonede</groupId>
+            <artifactId>tree-sitter-go</artifactId>
+            <version>0.25.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.bonede</groupId>
+            <artifactId>tree-sitter-python</artifactId>
+            <version>0.25.0</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

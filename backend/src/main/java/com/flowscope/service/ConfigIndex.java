@@ -45,12 +45,30 @@ public final class ConfigIndex {
             "@Value\\(\\s*\"\\$\\{([^}\"]*)}\"\\s*\\)\\s*(?:private\\s+|public\\s+|protected\\s+|final\\s+|static\\s+)*"
                     + "(?:final\\s+)?String\\s+(\\w+)");
     private static final Pattern PLACEHOLDER_RE = Pattern.compile("\\$\\{([^}]*)}");
+    // Go: `const Topic = "x"`, grouped `Topic = "x"` inside const(), and short-var
+    // `topic := "x"`. Over-captures generic assignments, but that only matters when a
+    // reference token actually resolves against the name, so it is harmless.
+    private static final Pattern GO_LITERAL_RE = Pattern.compile(
+            "(\\w+)\\s*:?=\\s*\"([^\"]{2,200})\"");
+    // Python: module-level `TOPIC = "events"` / `TABLE = 'x'` constants (settings.py).
+    private static final Pattern PY_LITERAL_RE = Pattern.compile(
+            "^\\s*(\\w+)\\s*=\\s*[\"']([^\"']{2,200})[\"']", Pattern.MULTILINE);
+    // Env/config accessors across Go & Python: captures the var/key name (group 1)
+    // and an optional string default (group 2). Handles os.Getenv, os.getenv,
+    // os.environ.get, os.environ[...], viper.GetString, and config.get.
+    private static final Pattern ENV_ACCESSOR_RE = Pattern.compile(
+            "(?:os\\.Getenv|os\\.getenv|os\\.environ\\.get|os\\.environ|viper\\.GetString|"
+                    + "config\\.get|conf\\.get|settings\\.get)\\s*[\\(\\[]\\s*"
+                    + "[\"']([^\"']+)[\"']\\s*(?:,\\s*[\"']([^\"']*)[\"']\\s*)?[\\)\\]]");
 
     public static ConfigIndex forService(Path dir) {
         ConfigIndex idx = new ConfigIndex();
         idx.loadYaml(dir);
         idx.loadEnv(dir);
         idx.loadJava(dir);
+        idx.loadGo(dir);
+        idx.loadPython(dir);
+        idx.loadPlainConfig(dir);
         return idx;
     }
 
@@ -107,6 +125,18 @@ public final class ConfigIndex {
             return out;
         }
 
+        // Go/Python env + config accessors: os.Getenv("X"), os.getenv("X"[, "def"]),
+        // os.environ.get("X"[, "def"]), os.environ["X"], viper.GetString("key"),
+        // config.get("key"). Resolve the named var/key, falling back to the default.
+        Matcher acc = ENV_ACCESSOR_RE.matcher(token);
+        if (acc.find()) {
+            String key = acc.group(1);
+            String def = acc.group(2);
+            String val = firstNonNull(env.get(key), props.get(key), constants.get(key), def);
+            addSplit(out, val);
+            return out;
+        }
+
         // Dotted reference: ClassName.CONSTANT -> use the last segment.
         String simple = token;
         int dot = simple.lastIndexOf('.');
@@ -119,9 +149,32 @@ public final class ConfigIndex {
                 valueFields.get(simple),
                 env.get(simple),
                 env.get(token),
-                props.get(token));
+                props.get(token),
+                props.get(simple));
         addSplit(out, v);
+        // Go/Python struct-field indirection: a reference like `cfg.Topic` maps to a
+        // dotted config key such as `kafka.topic`. Fall back to a unique key whose
+        // last segment matches, so config-driven names still resolve.
+        if (out.isEmpty()) {
+            addSplit(out, uniqueSuffixMatch(simple));
+        }
         return out;
+    }
+
+    /** The single props value whose dotted key ends in {@code .<simple>} (case-insensitive),
+     *  or null if there is no match or more than one. */
+    private String uniqueSuffixMatch(String simple) {
+        String suffix = "." + simple.toLowerCase(java.util.Locale.ROOT);
+        String hit = null;
+        for (Map.Entry<String, String> e : props.entrySet()) {
+            if (e.getKey().toLowerCase(java.util.Locale.ROOT).endsWith(suffix)) {
+                if (hit != null) {
+                    return null; // ambiguous
+                }
+                hit = e.getValue();
+            }
+        }
+        return hit;
     }
 
     /** Property/env entries whose key matches {@code keyRegex}, as [key,value] pairs. */
@@ -297,11 +350,106 @@ public final class ConfigIndex {
             int colon = placeholder.indexOf(':');
             String key = colon >= 0 ? placeholder.substring(0, colon) : placeholder;
             String def = colon >= 0 ? placeholder.substring(colon + 1) : null;
-            String val = props.getOrDefault(key.trim(), def);
+            // The property value may itself be a nested placeholder — e.g.
+            // cortex.kafka.audit-topic = ${CORTEX_AUDIT_TOPIC:audit} — so unwrap it
+            // to the concrete value/default rather than storing "${...}".
+            String val = unwrapPlaceholder(props.getOrDefault(key.trim(), def));
             if (val != null && !val.isBlank()) {
                 valueFields.putIfAbsent(field, val);
             }
         }
+    }
+
+    /** Index Go string constants / literal bindings so a topic/table/URL name
+     *  referenced by identifier can be resolved back to its literal. */
+    private void loadGo(Path dir) {
+        indexLiterals(dir, ".go", GO_LITERAL_RE);
+    }
+
+    /** Index Python module-level string constants (settings.py, constants.py, …). */
+    private void loadPython(Path dir) {
+        indexLiterals(dir, ".py", PY_LITERAL_RE);
+    }
+
+    private void indexLiterals(Path dir, String ext, Pattern re) {
+        if (!Files.isDirectory(dir)) {
+            return;
+        }
+        try (Stream<Path> s = Files.walk(dir, 15)) {
+            s.filter(p -> p.toString().endsWith(ext))
+                    .filter(p -> !isVendored(p))
+                    .forEach(p -> {
+                        Matcher m = re.matcher(WorkspaceScanner.read(p));
+                        while (m.find()) {
+                            constants.putIfAbsent(m.group(1), m.group(2));
+                        }
+                    });
+        } catch (IOException e) {
+            // ignore
+        }
+    }
+
+    private static boolean isVendored(Path p) {
+        String s = p.toString().replace('\\', '/');
+        return s.contains("/vendor/") || s.contains("/node_modules/") || s.contains("/.venv/")
+                || s.contains("/venv/") || s.contains("/site-packages/") || s.contains("/__pycache__/")
+                || s.contains("/target/") || s.contains("/dist/") || s.contains("/build/");
+    }
+
+    /** Load Go/Python config that lives outside Spring's resources dir:
+     *  {@code config.yaml|yml}, {@code app.yaml}, {@code config.toml} at the service
+     *  root or under a {@code config/} folder. */
+    private void loadPlainConfig(Path dir) {
+        for (String sub : List.of("", "config", "configs")) {
+            Path base = sub.isEmpty() ? dir : dir.resolve(sub);
+            if (!Files.isDirectory(base)) {
+                continue;
+            }
+            try (Stream<Path> s = Files.list(base)) {
+                for (Path p : s.filter(Files::isRegularFile).sorted().toList()) {
+                    String n = p.getFileName().toString().toLowerCase();
+                    if (n.matches("(config|app|application|settings)\\.(yml|yaml)")) {
+                        flattenYaml(WorkspaceScanner.read(p));
+                    } else if (n.matches("(config|app|application|settings)\\.toml")) {
+                        loadToml(WorkspaceScanner.read(p));
+                    }
+                }
+            } catch (IOException e) {
+                // ignore
+            }
+        }
+    }
+
+    /** Minimal TOML reader: flat {@code key = "value"} lines (sections ignored). */
+    private void loadToml(String text) {
+        for (String line : text.split("\n")) {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#") || t.startsWith("[")) {
+                continue;
+            }
+            int eq = t.indexOf('=');
+            if (eq > 0) {
+                props.putIfAbsent(t.substring(0, eq).trim(), unquote(stripInlineComment(t.substring(eq + 1).trim())));
+            }
+        }
+    }
+
+    /** Unwrap a single {@code ${KEY:default}} placeholder to its resolved value or
+     *  default; returns the input unchanged when it is not a placeholder. */
+    private String unwrapPlaceholder(String val) {
+        if (val == null) {
+            return null;
+        }
+        Matcher m = PLACEHOLDER_RE.matcher(val);
+        if (m.matches()) {
+            String inner = m.group(1);
+            int colon = inner.indexOf(':');
+            String key = colon >= 0 ? inner.substring(0, colon) : inner;
+            String def = colon >= 0 ? inner.substring(colon + 1) : null;
+            String resolved = props.get(key.trim());
+            return resolved != null ? resolved : def;
+        }
+        return val;
     }
 
     // --- helpers -----------------------------------------------------------
