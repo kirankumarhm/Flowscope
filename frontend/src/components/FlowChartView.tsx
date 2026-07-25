@@ -7,6 +7,7 @@ import expandCollapse from 'cytoscape-expand-collapse';
 import { jsPDF } from 'jspdf';
 import type { CFG } from '../types';
 import { cyToDrawioXml } from '../drawio';
+import { fetchFlowDescription } from '../api';
 import NodeDetailPanel from './NodeDetailPanel';
 import type { SelectedNode } from './NodeDetailPanel';
 
@@ -21,6 +22,7 @@ interface FlowChartViewProps {
   cfg: CFG | null;
   filename?: string; // base name for exported files
   sourceRoot?: string; // analyzed absolute path (for resolving node file locations)
+  functionId?: string; // the original function ID used to build the CFG
 }
 
 type ExportFormat = 'png' | 'jpg' | 'svg' | 'pdf' | 'drawio';
@@ -219,6 +221,7 @@ export default function FlowChartView({
   cfg,
   filename = 'flowchart',
   sourceRoot = '',
+  functionId,
 }: FlowChartViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -232,6 +235,8 @@ export default function FlowChartView({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [selected, setSelected] = useState<SelectedNode | null>(null);
+  const [description, setDescription] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const MM_W = 200;
   const MM_H = 150;
@@ -253,6 +258,25 @@ export default function FlowChartView({
       document.exitFullscreen();
     } else {
       wrapRef.current?.requestFullscreen?.();
+    }
+  };
+
+  const generateDescription = async () => {
+    if (!cfg) return;
+    console.log('[FlowChartView] Generating description for functionId:', functionId);
+    setIsGenerating(true);
+    try {
+      const id = functionId || cfg.nodes[0]?.id || '';
+      console.log('[FlowChartView] Requesting description from API with path:', sourceRoot, 'and id:', id);
+      
+      const res = await fetchFlowDescription(sourceRoot, id, 4);
+      console.log('[FlowChartView] Received description:', res.description);
+      setDescription(res.description);
+    } catch (e) {
+      console.error('[FlowChartView] Error generating description:', e);
+      alert(`Failed to generate description: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -567,6 +591,15 @@ export default function FlowChartView({
             </button>
           </>
         )}
+        <button
+          type="button"
+          className="toolbar-btn"
+          onClick={generateDescription}
+          disabled={isGenerating}
+          title="Generate textual description of the flow"
+        >
+          {isGenerating ? 'Generating...' : 'Describe Flow'}
+        </button>
         <div className="export-menu">
           <button
             type="button"
@@ -590,6 +623,18 @@ export default function FlowChartView({
       </div>
       <div className="flowchart-canvas" ref={containerRef} />
       <div className="flowchart-tooltip" ref={tooltipRef} />
+
+      {description && (
+        <div className="flow-description-panel">
+          <div className="flow-description-header">
+            <h3>Flow Analysis</h3>
+            <button onClick={() => setDescription(null)}>✕</button>
+          </div>
+          <div className="flow-description-content">
+            <div className="markdown-body">{description}</div>
+          </div>
+        </div>
+      )}
 
       <div className="zoom-controls">
         <button type="button" onClick={() => zoomBy(1.25)} title="Zoom in (Ctrl +)">＋</button>

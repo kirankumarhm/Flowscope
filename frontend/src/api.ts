@@ -101,6 +101,30 @@ export async function fetchComponentMap(path: string): Promise<ComponentMap> {
 }
 
 /**
+ * Fetch the textual description of a flow chart. Calls
+ * GET /api/flow-description?path=<dir>&functionId=<id>&maxDepth=<n>.
+ */
+export async function fetchFlowDescription(
+  path: string,
+  functionId: string,
+  maxDepth = 4
+): Promise<{ description: string }> {
+  try {
+    const response = await axios.get<{ description: string }>('/api/flow-description', {
+      params: { path, functionId, maxDepth },
+    });
+    return response.data;
+  } catch (err) {
+    const axiosErr = err as AxiosError<ApiError>;
+    const serverMessage = axiosErr.response?.data?.error;
+    if (serverMessage) {
+      throw new Error(serverMessage);
+    }
+    throw new Error('Connection failed — is the server running?');
+  }
+}
+
+/**
  * Fetch the high-level layered architecture view for a single app.
  * Calls GET /api/architecture?path=<app-dir>.
  */

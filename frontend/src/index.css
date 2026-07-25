@@ -794,3 +794,73 @@ body {
   color: var(--color-muted);
   margin: 0;
 }
+
+/* Flow Description Panel */
+.flow-description-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 400px;
+  height: 100%;
+  background: var(--color-bg);
+  border-left: 1px solid var(--color-border);
+  box-shadow: -4px 0 15px rgba(0, 0, 0, 0.05);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.2s ease-out;
+}
+
+.flow-description-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.flow-description-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.flow-description-header button {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: var(--color-muted);
+  padding: 0;
+  line-height: 1;
+}
+
+.flow-description-header button:hover {
+  color: var(--color-text);
+}
+
+.flow-description-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  line-height: 1.6;
+}
+
+.markdown-body {
+  font-size: 14px;
+  color: var(--color-text);
+  white-space: pre-wrap;
+}
+
+.markdown-body h3 {
+  font-size: 16px;
+  margin-bottom: 12px;
+  color: var(--color-accent);
+}
+
+@keyframes slideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
