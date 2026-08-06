@@ -11,3 +11,10 @@ dist/
 .vscode/
 *.iml
 .DS_Store
+
+# Eclipse / STS
+.classpath
+.project
+.settings/
+.apt_generated/
+.factorypath

@@ -5,8 +5,9 @@ import dagre from 'cytoscape-dagre';
 import svg from 'cytoscape-svg';
 import expandCollapse from 'cytoscape-expand-collapse';
 import { jsPDF } from 'jspdf';
-import type { CFG } from '../types';
+import type { BusinessLogic, CFG, FlowDescription } from '../types';
 import { cyToDrawioXml } from '../drawio';
+import { fetchBusinessLogic, fetchFlowDescription, fetchLlmStatus } from '../api';
 import NodeDetailPanel from './NodeDetailPanel';
 import type { SelectedNode } from './NodeDetailPanel';
 
@@ -21,6 +22,8 @@ interface FlowChartViewProps {
   cfg: CFG | null;
   filename?: string; // base name for exported files
   sourceRoot?: string; // analyzed absolute path (for resolving node file locations)
+  functionId?: string; // the original function ID used to build the CFG
+  depth?: number; // call depth the CFG was built with, so the description matches
 }
 
 type ExportFormat = 'png' | 'jpg' | 'svg' | 'pdf' | 'drawio';
@@ -219,6 +222,8 @@ export default function FlowChartView({
   cfg,
   filename = 'flowchart',
   sourceRoot = '',
+  functionId,
+  depth = 4,
 }: FlowChartViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -232,6 +237,13 @@ export default function FlowChartView({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [selected, setSelected] = useState<SelectedNode | null>(null);
+  const [description, setDescription] = useState<FlowDescription | null>(null);
+  const [descError, setDescError] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [logic, setLogic] = useState<BusinessLogic | null>(null);
+  const [logicError, setLogicError] = useState<string | null>(null);
+  const [isExplaining, setIsExplaining] = useState(false);
+  const [llmReady, setLlmReady] = useState(false);
 
   const MM_W = 200;
   const MM_H = 150;
@@ -254,6 +266,93 @@ export default function FlowChartView({
     } else {
       wrapRef.current?.requestFullscreen?.();
     }
+  };
+
+  // The description describes the CFG the backend builds for (functionId, depth),
+  // so it must be requested with the same depth the chart is showing.
+  const id = functionId || cfg?.functionId || '';
+  const generateDescription = async () => {
+    if (!cfg || !id) return;
+    setIsGenerating(true);
+    setDescError(null);
+    setLogic(null); // one panel at a time
+    setLogicError(null);
+    try {
+      setDescription(await fetchFlowDescription(sourceRoot, id, depth));
+    } catch (e) {
+      setDescError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const explainBusinessLogic = async () => {
+    if (!cfg || !id) return;
+    setIsExplaining(true);
+    setLogicError(null);
+    setDescription(null); // one panel at a time
+    setDescError(null);
+    try {
+      setLogic(await fetchBusinessLogic(sourceRoot, id, depth));
+    } catch (e) {
+      setLogicError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIsExplaining(false);
+    }
+  };
+
+  // Probe once so the button can say whether an LLM will be used.
+  useEffect(() => {
+    let cancelled = false;
+    fetchLlmStatus().then((s) => {
+      if (!cancelled) setLlmReady(s.available);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Drop a stale panel when the flow it described is replaced.
+  useEffect(() => {
+    setDescription(null);
+    setDescError(null);
+    setLogic(null);
+    setLogicError(null);
+  }, [id, depth, sourceRoot]);
+
+  const panelOpen = !!(description || descError || logic || logicError);
+  const closePanel = () => {
+    setDescription(null);
+    setDescError(null);
+    setLogic(null);
+    setLogicError(null);
+  };
+
+  // Esc closes whichever panel is open.
+  useEffect(() => {
+    if (!panelOpen) return;
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closePanel();
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [panelOpen]);
+
+  const copyDescription = () => {
+    if (description) {
+      navigator.clipboard?.writeText(description.text);
+    }
+  };
+
+  const downloadDescription = () => {
+    if (!description) return;
+    const blob = new Blob([description.text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}-description.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // Keyboard shortcuts: Ctrl/Cmd + = / - / 0.
@@ -545,7 +644,10 @@ export default function FlowChartView({
   }
 
   return (
-    <div className="flowchart-wrap" ref={wrapRef}>
+    <div
+      className={panelOpen ? 'flowchart-wrap with-description' : 'flowchart-wrap'}
+      ref={wrapRef}
+    >
       <div className="flowchart-toolbar">
         {hasGroups && (
           <>
@@ -567,6 +669,35 @@ export default function FlowChartView({
             </button>
           </>
         )}
+        <button
+          type="button"
+          className="toolbar-btn"
+          onClick={generateDescription}
+          disabled={isGenerating || !id}
+          title={
+            id
+              ? 'Describe this flow step by step at the current call depth'
+              : 'Select a function to describe its flow'
+          }
+        >
+          {isGenerating ? 'Describing…' : 'Describe flow'}
+        </button>
+        <button
+          type="button"
+          className="toolbar-btn"
+          onClick={explainBusinessLogic}
+          disabled={isExplaining || !id}
+          title={
+            id
+              ? llmReady
+                ? 'Explain the business purpose of this flow using the configured LLM provider'
+                : 'Infer the business purpose offline (configure flowscope.llm.* for LLM analysis)'
+              : 'Select a function to explain its business logic'
+          }
+        >
+          {isExplaining ? 'Explaining…' : 'Business logic'}
+          {!isExplaining && !llmReady && <span className="toolbar-btn-tag">offline</span>}
+        </button>
         <div className="export-menu">
           <button
             type="button"
@@ -590,6 +721,43 @@ export default function FlowChartView({
       </div>
       <div className="flowchart-canvas" ref={containerRef} />
       <div className="flowchart-tooltip" ref={tooltipRef} />
+
+      {panelOpen && (
+        <aside
+          className="flow-description-panel"
+          aria-label={logic || logicError ? 'Business logic' : 'Flow description'}
+        >
+          <div className="flow-description-header">
+            <h3>{logic || logicError ? 'Business logic' : 'Flow description'}</h3>
+            <div className="flow-description-actions">
+              {description && (
+                <>
+                  <button type="button" onClick={copyDescription} title="Copy as text">
+                    Copy
+                  </button>
+                  <button type="button" onClick={downloadDescription} title="Download as .txt">
+                    Save
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                className="flow-description-close"
+                onClick={closePanel}
+                aria-label="Close panel"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <div className="flow-description-content">
+            {descError && <p className="flow-description-error">{descError}</p>}
+            {logicError && <p className="flow-description-error">{logicError}</p>}
+            {description && !descError && <FlowDescriptionBody description={description} />}
+            {logic && !logicError && <BusinessLogicBody logic={logic} />}
+          </div>
+        </aside>
+      )}
 
       <div className="zoom-controls">
         <button type="button" onClick={() => zoomBy(1.25)} title="Zoom in (Ctrl +)">＋</button>
@@ -630,6 +798,120 @@ const LEGEND: { role: Role; label: string }[] = [
   { role: 'return', label: 'Return' },
   { role: 'throw', label: 'Throw / error' },
 ];
+
+/**
+ * Renders the backend's structured walkthrough. The steps arrive already
+ * phrased and ordered; this only lays them out — numbered steps, nested
+ * inlined-method notes, and each decision's branches as a sub-list.
+ */
+function FlowDescriptionBody({ description }: { description: FlowDescription }) {
+  const { headline, stats, steps, truncated } = description;
+  return (
+    <>
+      <p className="flow-description-headline">{headline}</p>
+      <div className="flow-description-stats">
+        <span>{stats.nodes} steps</span>
+        <span>{stats.calls} calls</span>
+        <span>{stats.decisions} decisions</span>
+        {stats.loops > 0 && <span>{stats.loops} loops</span>}
+        {stats.thrown > 0 && <span>{stats.thrown} failure paths</span>}
+      </div>
+      <ol className="flow-description-steps">
+        {steps.map((step, i) => (
+          <li
+            key={`${step.index}-${i}`}
+            className={step.kind === 'note' ? 'flow-step note' : `flow-step ${step.kind}`}
+            style={{ marginLeft: step.depth * 14 }}
+          >
+            <span className="flow-step-text">
+              {step.index > 0 && <span className="flow-step-num">{step.index}.</span>}
+              {step.text}
+              {step.line != null && <span className="flow-step-line">line {step.line}</span>}
+            </span>
+            {step.branches && (
+              <ul className="flow-step-branches">
+                {step.branches.map((branch, j) => (
+                  <li key={j}>{branch}</li>
+                ))}
+              </ul>
+            )}
+          </li>
+        ))}
+      </ol>
+      {truncated && (
+        <p className="flow-description-note">
+          Flow continues past this point — lower the call depth to describe less of it.
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
+ * Renders the business-logic view. Leads with where the analysis came from:
+ * an LLM interprets intent, heuristics only categorize what the code touches,
+ * and conflating the two would misrepresent how much to trust it.
+ */
+function BusinessLogicBody({ logic }: { logic: BusinessLogic }) {
+  const fromLlm = logic.origin === 'llm';
+  return (
+    <>
+      <div className={fromLlm ? 'logic-origin llm' : 'logic-origin heuristic'}>
+        <span className="logic-origin-badge">{fromLlm ? 'LLM' : 'Offline'}</span>
+        <span className="logic-origin-text">
+          {fromLlm ? logic.provider : 'Inferred from naming and control flow'}
+        </span>
+      </div>
+
+      <p className="flow-description-headline">{logic.summary}</p>
+
+      {logic.phases && (
+        <ol className="logic-phases">
+          {logic.phases.map((phase) => (
+            <li key={phase.index} className={`logic-phase ${phase.kind}`}>
+              <div className="logic-phase-name">
+                {phase.name}
+                {phase.line != null && (
+                  <span className="flow-step-line">line {phase.line}</span>
+                )}
+              </div>
+              {phase.purpose && <div className="logic-phase-purpose">{phase.purpose}</div>}
+              {phase.evidence && (
+                <ul className="logic-phase-evidence">
+                  {phase.evidence.map((item, i) => (
+                    <li key={i}>{item}</li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {logic.rules && (
+        <div className="logic-section">
+          <h4>Rules enforced</h4>
+          <ul className="logic-rules">
+            {logic.rules.map((rule, i) => (
+              <li key={i}>{rule}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {logic.caveats && (
+        <div className="logic-section">
+          <h4>Limits of this analysis</h4>
+          <ul className="logic-caveats">
+            {logic.caveats.map((caveat, i) => (
+              <li key={i}>{caveat}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </>
+  );
+}
 
 function FlowLegend() {
   return (

@@ -450,7 +450,13 @@ export default function App() {
               </div>
             )}
             {view === 'flow' && (
-              <FlowChartView cfg={displayedCfg} filename={exportName} sourceRoot={analyzedPath} />
+              <FlowChartView
+                cfg={displayedCfg}
+                filename={exportName}
+                sourceRoot={analyzedPath}
+                functionId={selectedFunctionId ?? undefined}
+                depth={depth}
+              />
             )}
             {view === 'sequence' && (
               <SequenceDiagramView mermaidText={seqText} loading={seqLoading} error={seqError} />
