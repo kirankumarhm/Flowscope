@@ -19,9 +19,10 @@ The Flow Chart also explains itself in prose: **Describe flow** walks the graph 
 and **Business logic** says what the flow accomplishes — offline by default, or via an LLM
 provider if you configure one (see **[LLM provider](#llm-provider-optional)**).
 
-- **Backend:** Java 21 · Spring Boot 3.4 · [JavaParser](https://javaparser.org/) (pure-JVM, accurate).
+- **Backend:** Java 21 · Spring Boot 3.4 · [JavaParser](https://javaparser.org/) for Java · [tree-sitter](https://tree-sitter.github.io/) for Go and Python (both pure-JVM — no external toolchain).
 - **Frontend:** Vite · React · TypeScript · Cytoscape.js (flow/component) · Mermaid (sequence/architecture).
-- **Cross-language:** the Service Map extracts communication primitives from **Java and Node/TypeScript** via targeted pattern extraction (no full TS AST required).
+- **Languages:** **Java, Go, and Python** are parsed into the IR, so all five diagrams work for each. Go and Python classification is naming-convention based rather than annotation-driven, so their Component/Architecture views are shallower than Java's.
+- **Service Map** additionally covers **Node/TypeScript, NestJS, Next.js, and React** by extracting communication primitives (Kafka, REST, gRPC, datastores) with targeted patterns — no full TS AST required.
 
 ---
 
