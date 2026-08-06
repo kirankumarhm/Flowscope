@@ -5,7 +5,7 @@ import dagre from 'cytoscape-dagre';
 import svg from 'cytoscape-svg';
 import expandCollapse from 'cytoscape-expand-collapse';
 import { jsPDF } from 'jspdf';
-import type { CFG } from '../types';
+import type { CFG, FlowDescription } from '../types';
 import { cyToDrawioXml } from '../drawio';
 import { fetchFlowDescription } from '../api';
 import NodeDetailPanel from './NodeDetailPanel';
@@ -23,6 +23,7 @@ interface FlowChartViewProps {
   filename?: string; // base name for exported files
   sourceRoot?: string; // analyzed absolute path (for resolving node file locations)
   functionId?: string; // the original function ID used to build the CFG
+  depth?: number; // call depth the CFG was built with, so the description matches
 }
 
 type ExportFormat = 'png' | 'jpg' | 'svg' | 'pdf' | 'drawio';
@@ -222,6 +223,7 @@ export default function FlowChartView({
   filename = 'flowchart',
   sourceRoot = '',
   functionId,
+  depth = 4,
 }: FlowChartViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
@@ -235,7 +237,8 @@ export default function FlowChartView({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [selected, setSelected] = useState<SelectedNode | null>(null);
-  const [description, setDescription] = useState<string | null>(null);
+  const [description, setDescription] = useState<FlowDescription | null>(null);
+  const [descError, setDescError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
 
   const MM_W = 200;
@@ -261,23 +264,56 @@ export default function FlowChartView({
     }
   };
 
+  // The description describes the CFG the backend builds for (functionId, depth),
+  // so it must be requested with the same depth the chart is showing.
+  const id = functionId || cfg?.functionId || '';
   const generateDescription = async () => {
-    if (!cfg) return;
-    console.log('[FlowChartView] Generating description for functionId:', functionId);
+    if (!cfg || !id) return;
     setIsGenerating(true);
+    setDescError(null);
     try {
-      const id = functionId || cfg.nodes[0]?.id || '';
-      console.log('[FlowChartView] Requesting description from API with path:', sourceRoot, 'and id:', id);
-      
-      const res = await fetchFlowDescription(sourceRoot, id, 4);
-      console.log('[FlowChartView] Received description:', res.description);
-      setDescription(res.description);
+      setDescription(await fetchFlowDescription(sourceRoot, id, depth));
     } catch (e) {
-      console.error('[FlowChartView] Error generating description:', e);
-      alert(`Failed to generate description: ${e instanceof Error ? e.message : String(e)}`);
+      setDescError(e instanceof Error ? e.message : String(e));
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  // Drop a stale description when the flow it described is replaced.
+  useEffect(() => {
+    setDescription(null);
+    setDescError(null);
+  }, [id, depth, sourceRoot]);
+
+  // Esc closes the description panel.
+  useEffect(() => {
+    if (!description && !descError) return;
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setDescription(null);
+        setDescError(null);
+      }
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [description, descError]);
+
+  const copyDescription = () => {
+    if (description) {
+      navigator.clipboard?.writeText(description.text);
+    }
+  };
+
+  const downloadDescription = () => {
+    if (!description) return;
+    const blob = new Blob([description.text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}-description.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // Keyboard shortcuts: Ctrl/Cmd + = / - / 0.
@@ -569,7 +605,12 @@ export default function FlowChartView({
   }
 
   return (
-    <div className="flowchart-wrap" ref={wrapRef}>
+    <div
+      className={
+        description || descError ? 'flowchart-wrap with-description' : 'flowchart-wrap'
+      }
+      ref={wrapRef}
+    >
       <div className="flowchart-toolbar">
         {hasGroups && (
           <>
@@ -595,10 +636,14 @@ export default function FlowChartView({
           type="button"
           className="toolbar-btn"
           onClick={generateDescription}
-          disabled={isGenerating}
-          title="Generate textual description of the flow"
+          disabled={isGenerating || !id}
+          title={
+            id
+              ? 'Describe this flow step by step at the current call depth'
+              : 'Select a function to describe its flow'
+          }
         >
-          {isGenerating ? 'Generating...' : 'Describe Flow'}
+          {isGenerating ? 'Describing…' : 'Describe flow'}
         </button>
         <div className="export-menu">
           <button
@@ -624,16 +669,42 @@ export default function FlowChartView({
       <div className="flowchart-canvas" ref={containerRef} />
       <div className="flowchart-tooltip" ref={tooltipRef} />
 
-      {description && (
-        <div className="flow-description-panel">
+      {(description || descError) && (
+        <aside className="flow-description-panel" aria-label="Flow description">
           <div className="flow-description-header">
-            <h3>Flow Analysis</h3>
-            <button onClick={() => setDescription(null)}>✕</button>
+            <h3>Flow description</h3>
+            <div className="flow-description-actions">
+              {description && (
+                <>
+                  <button type="button" onClick={copyDescription} title="Copy as text">
+                    Copy
+                  </button>
+                  <button type="button" onClick={downloadDescription} title="Download as .txt">
+                    Save
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                className="flow-description-close"
+                onClick={() => {
+                  setDescription(null);
+                  setDescError(null);
+                }}
+                aria-label="Close description"
+              >
+                ✕
+              </button>
+            </div>
           </div>
           <div className="flow-description-content">
-            <div className="markdown-body">{description}</div>
+            {descError ? (
+              <p className="flow-description-error">{descError}</p>
+            ) : (
+              description && <FlowDescriptionBody description={description} />
+            )}
           </div>
-        </div>
+        </aside>
       )}
 
       <div className="zoom-controls">
@@ -675,6 +746,54 @@ const LEGEND: { role: Role; label: string }[] = [
   { role: 'return', label: 'Return' },
   { role: 'throw', label: 'Throw / error' },
 ];
+
+/**
+ * Renders the backend's structured walkthrough. The steps arrive already
+ * phrased and ordered; this only lays them out — numbered steps, nested
+ * inlined-method notes, and each decision's branches as a sub-list.
+ */
+function FlowDescriptionBody({ description }: { description: FlowDescription }) {
+  const { headline, stats, steps, truncated } = description;
+  return (
+    <>
+      <p className="flow-description-headline">{headline}</p>
+      <div className="flow-description-stats">
+        <span>{stats.nodes} steps</span>
+        <span>{stats.calls} calls</span>
+        <span>{stats.decisions} decisions</span>
+        {stats.loops > 0 && <span>{stats.loops} loops</span>}
+        {stats.thrown > 0 && <span>{stats.thrown} failure paths</span>}
+      </div>
+      <ol className="flow-description-steps">
+        {steps.map((step, i) => (
+          <li
+            key={`${step.index}-${i}`}
+            className={step.kind === 'note' ? 'flow-step note' : `flow-step ${step.kind}`}
+            style={{ marginLeft: step.depth * 14 }}
+          >
+            <span className="flow-step-text">
+              {step.index > 0 && <span className="flow-step-num">{step.index}.</span>}
+              {step.text}
+              {step.line != null && <span className="flow-step-line">line {step.line}</span>}
+            </span>
+            {step.branches && (
+              <ul className="flow-step-branches">
+                {step.branches.map((branch, j) => (
+                  <li key={j}>{branch}</li>
+                ))}
+              </ul>
+            )}
+          </li>
+        ))}
+      </ol>
+      {truncated && (
+        <p className="flow-description-note">
+          Flow continues past this point — lower the call depth to describe less of it.
+        </p>
+      )}
+    </>
+  );
+}
 
 function FlowLegend() {
   return (
