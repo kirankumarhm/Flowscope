@@ -39,6 +39,14 @@ export default function FunctionPicker({
     [functions, q]
   );
 
+  const selectedLabel = useMemo(() => {
+    if (!selectedId) return null;
+    const match =
+      endpoints.find((f) => f.id === selectedId) ??
+      functions.find((f) => f.id === selectedId);
+    return match?.label ?? null;
+  }, [endpoints, functions, selectedId]);
+
   if (endpoints.length === 0 && functions.length === 0) {
     return null;
   }
@@ -56,6 +64,21 @@ export default function FunctionPicker({
         <span className="function-picker-count">
           {shown} / {total}
         </span>
+      </div>
+      <div
+        className={
+          selectedLabel ? 'function-picker-selected' : 'function-picker-selected empty'
+        }
+        title={selectedLabel ?? undefined}
+      >
+        {selectedLabel ? (
+          <>
+            <span className="function-picker-selected-tag">Selected</span>
+            <span className="function-picker-selected-label">{selectedLabel}</span>
+          </>
+        ) : (
+          <span className="function-picker-selected-label">No start point selected</span>
+        )}
       </div>
       <input
         id="fn-filter"

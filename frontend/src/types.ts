@@ -65,6 +65,65 @@ export interface CFGGroup {
   parent?: string; // enclosing group id for nested inlines
 }
 
+// --- Flow description: the flow chart explained in words --------------------
+
+export interface FlowDescriptionStats {
+  nodes: number;
+  calls: number;
+  decisions: number;
+  loops: number;
+  thrown: number;
+  returns: number;
+  methods: number;
+}
+
+export interface FlowDescriptionStep {
+  index: number; // 1-based; 0 for unnumbered structural notes
+  kind: CFGNodeKind | 'note';
+  text: string;
+  line?: number;
+  file?: string;
+  method?: string; // inlined method this step belongs to
+  depth: number; // nesting level, for indentation
+  branches?: string[]; // e.g. ["yes → validate(order)", "no → return 400"]
+}
+
+export interface FlowDescription {
+  functionId?: string;
+  headline: string;
+  stats: FlowDescriptionStats;
+  steps: FlowDescriptionStep[];
+  text: string; // plain-text rendering, for copy/download
+  truncated: boolean;
+}
+
+// --- Business logic: what the flow is trying to accomplish -------------------
+
+export interface BusinessLogicPhase {
+  index: number;
+  name: string;
+  kind: string; // heuristic concern ("validation", "lookup", …) or "llm"
+  purpose?: string;
+  evidence?: string[]; // code steps the phase was inferred from
+  line?: number;
+}
+
+export interface BusinessLogic {
+  functionId?: string;
+  origin: 'llm' | 'heuristic';
+  provider?: string; // endpoint host + model when origin is "llm"
+  llmConfigured: boolean;
+  summary: string;
+  phases?: BusinessLogicPhase[];
+  rules?: string[];
+  caveats?: string[];
+}
+
+export interface LlmStatus {
+  available: boolean;
+  provider: string;
+}
+
 export interface SequenceDiagram {
   entryFunctionId: string;
   mermaidText: string;
