@@ -450,11 +450,12 @@ export default function App() {
               </div>
             )}
             {view === 'flow' && (
-              <FlowChartView 
-                cfg={displayedCfg} 
-                filename={exportName} 
-                sourceRoot={analyzedPath} 
-                functionId={selectedFunctionId} 
+              <FlowChartView
+                cfg={displayedCfg}
+                filename={exportName}
+                sourceRoot={analyzedPath}
+                functionId={selectedFunctionId ?? undefined}
+                depth={depth}
               />
             )}
             {view === 'sequence' && (
