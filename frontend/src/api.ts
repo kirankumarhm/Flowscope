@@ -4,6 +4,7 @@ import type {
   Architecture,
   CFG,
   ComponentMap,
+  FlowDescription,
   Graph,
   SequenceDiagram,
   ServiceMap,
@@ -101,16 +102,17 @@ export async function fetchComponentMap(path: string): Promise<ComponentMap> {
 }
 
 /**
- * Fetch the textual description of a flow chart. Calls
+ * Fetch the step-by-step description of a flow chart. Calls
  * GET /api/flow-description?path=<dir>&functionId=<id>&maxDepth=<n>.
+ * Pass the same maxDepth the chart was built with so the words match the graph.
  */
 export async function fetchFlowDescription(
   path: string,
   functionId: string,
   maxDepth = 4
-): Promise<{ description: string }> {
+): Promise<FlowDescription> {
   try {
-    const response = await axios.get<{ description: string }>('/api/flow-description', {
+    const response = await axios.get<FlowDescription>('/api/flow-description', {
       params: { path, functionId, maxDepth },
     });
     return response.data;
