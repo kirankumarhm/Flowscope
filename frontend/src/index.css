@@ -309,6 +309,49 @@ body {
   color: var(--color-muted);
 }
 
+.function-picker-selected {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-accent);
+  border-radius: 8px;
+  background: rgba(37, 99, 235, 0.08);
+  font-size: 13px;
+  min-height: 20px;
+}
+
+.function-picker-selected.empty {
+  border-color: var(--color-border);
+  border-style: dashed;
+  background: transparent;
+  color: var(--color-muted);
+}
+
+.function-picker-selected-tag {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-accent);
+}
+
+.function-picker-selected-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+  font-family: var(--font-mono, var(--font-sans));
+}
+
+.function-picker-selected.empty .function-picker-selected-label {
+  color: var(--color-muted);
+  font-family: var(--font-sans);
+}
+
 .function-select {
   width: 100%;
   border: 1px solid var(--color-border);
@@ -328,6 +371,14 @@ body {
 
 .function-select option {
   padding: 4px 6px;
+}
+
+/* Keep the chosen start point visibly highlighted even when the listbox is
+   not focused (native selects otherwise fade it to a faint grey). */
+.function-select option:checked {
+  background: var(--color-accent) linear-gradient(0deg, var(--color-accent), var(--color-accent));
+  color: #ffffff;
+  font-weight: 600;
 }
 
 /* Flow chart */
@@ -827,37 +878,145 @@ body {
   color: var(--color-text);
 }
 
-.flow-description-header button {
-  background: transparent;
-  border: none;
-  font-size: 18px;
-  cursor: pointer;
-  color: var(--color-muted);
-  padding: 0;
-  line-height: 1;
+.flow-description-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.flow-description-header button:hover {
+.flow-description-actions button {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-muted);
+  padding: 3px 8px;
+  line-height: 1.4;
+}
+
+.flow-description-actions button:hover {
   color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
+.flow-description-actions .flow-description-close {
+  border: none;
+  font-size: 16px;
+  padding: 0 2px;
 }
 
 .flow-description-content {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 16px;
   line-height: 1.6;
 }
 
-.markdown-body {
+.flow-description-headline {
+  margin: 0 0 10px;
   font-size: 14px;
+  font-weight: 600;
   color: var(--color-text);
-  white-space: pre-wrap;
+  line-height: 1.45;
 }
 
-.markdown-body h3 {
-  font-size: 16px;
-  margin-bottom: 12px;
-  color: var(--color-accent);
+.flow-description-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.flow-description-stats span {
+  font-size: 11px;
+  color: var(--color-muted);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.flow-description-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+}
+
+.flow-step {
+  padding: 3px 0;
+  border-left: 2px solid transparent;
+  padding-left: 8px;
+}
+
+/* Colors echo the flow chart's node roles so the panel and graph agree. */
+.flow-step.branch { border-left-color: #f59e0b; }
+.flow-step.loop { border-left-color: #8b5cf6; }
+.flow-step.call { border-left-color: #2563eb; }
+.flow-step.return { border-left-color: #10b981; }
+.flow-step.throw { border-left-color: #ef4444; }
+
+.flow-step.note {
+  font-weight: 600;
+  color: var(--color-text);
+  margin-top: 10px;
+  border-left-color: var(--color-border);
+}
+
+.flow-step-text {
+  display: block;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.flow-step-num {
+  color: var(--color-muted);
+  margin-right: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.flow-step-line {
+  color: var(--color-muted);
+  font-size: 11px;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.flow-step-branches {
+  list-style: none;
+  margin: 2px 0 4px;
+  padding-left: 18px;
+}
+
+.flow-step-branches li {
+  font-size: 12px;
+  color: var(--color-muted);
+  padding: 1px 0;
+  word-break: break-word;
+}
+
+.flow-step-branches li::before {
+  content: '↳ ';
+}
+
+.flow-description-error {
+  margin: 0;
+  font-size: 13px;
+  color: #b91c1c;
+  line-height: 1.5;
+}
+
+.flow-description-note {
+  margin: 14px 0 0;
+  font-size: 12px;
+  color: var(--color-muted);
+  font-style: italic;
+}
+
+/* Keep the node detail panel clear of the description panel. */
+.flowchart-wrap.with-description .detail-panel {
+  right: 424px;
 }
 
 @keyframes slideIn {
