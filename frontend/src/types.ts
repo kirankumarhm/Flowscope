@@ -65,6 +65,38 @@ export interface CFGGroup {
   parent?: string; // enclosing group id for nested inlines
 }
 
+// --- Flow description: the flow chart explained in words --------------------
+
+export interface FlowDescriptionStats {
+  nodes: number;
+  calls: number;
+  decisions: number;
+  loops: number;
+  thrown: number;
+  returns: number;
+  methods: number;
+}
+
+export interface FlowDescriptionStep {
+  index: number; // 1-based; 0 for unnumbered structural notes
+  kind: CFGNodeKind | 'note';
+  text: string;
+  line?: number;
+  file?: string;
+  method?: string; // inlined method this step belongs to
+  depth: number; // nesting level, for indentation
+  branches?: string[]; // e.g. ["yes → validate(order)", "no → return 400"]
+}
+
+export interface FlowDescription {
+  functionId?: string;
+  headline: string;
+  stats: FlowDescriptionStats;
+  steps: FlowDescriptionStep[];
+  text: string; // plain-text rendering, for copy/download
+  truncated: boolean;
+}
+
 export interface SequenceDiagram {
   entryFunctionId: string;
   mermaidText: string;
