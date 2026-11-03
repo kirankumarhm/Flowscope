@@ -26,6 +26,25 @@ provider if you configure one (see **[LLM provider](#llm-provider-optional)**).
 
 ---
 
+## Screenshots
+
+### Interactive Control Flow Graph & Function Explorer
+![Flow Chart View](docs/screenshots/flow-view.png)
+
+### Layered Architecture & Resource Dependency View
+![Architecture View](docs/screenshots/architecture-view.png)
+
+### Workspace Service Map Topology
+![Service Map View](docs/screenshots/servicemap-view.png)
+
+### Component Sequence Diagram
+![Sequence Diagram View](docs/screenshots/sequence-view.png)
+
+### OpenAPI & Model Context Protocol (MCP) Endpoints
+![Swagger MCP View](docs/screenshots/swagger-mcp-view.png)
+
+---
+
 ## Quick start
 
 The backend (REST API) and frontend (web UI) are **independent projects** — build and
