@@ -1,6 +1,7 @@
 # Java / Maven
 target/
 *.class
+.jqwik-database
 
 # Node / Vite (frontend)
 node_modules/

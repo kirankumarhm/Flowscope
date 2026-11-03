@@ -96,9 +96,61 @@ schemas are in **Swagger UI**.
 | `GET /api/component?path=` | One app's beans + injection/call dependencies. |
 | `GET /api/architecture?path=` | One app's layers + datastores/topics/externals. |
 | `GET /api/servicemap?path=&exclude=` | Whole-workspace service topology. |
+| `GET /mcp/sse` | **MCP Server** Server-Sent Events stream for AI agents (Cursor, Windsurf, remote agents). |
+| `POST /mcp/message?sessionId=` | **MCP Server** JSON-RPC 2.0 message dispatch endpoint. |
 
 Common statuses: **400** missing/invalid `path` · **404** unknown `functionId` ·
 **500** internal / heap exceeded · **504** analysis timed out.
+
+---
+
+## Model Context Protocol (MCP) Server
+
+FlowScope runs as a first-class **Model Context Protocol (MCP)** server, enabling AI coding agents (Claude Desktop, Antigravity, Cursor, Windsurf, Cline) to query codebase architecture, trace call graphs, generate Mermaid sequence diagrams, and explore cross-service topologies directly.
+
+### Dual-Transport Support
+
+1. **STDIO Transport** (for desktop AI assistants launching FlowScope as a subprocess):
+   ```bash
+   java -jar backend/target/flowscope-web.jar --mcp
+   ```
+
+2. **HTTP/SSE Transport** (for web & networked AI agents when FlowScope backend is running):
+   Connect your MCP client to:
+   ```
+   http://localhost:8080/mcp/sse
+   ```
+
+### Available MCP Tools
+
+| Tool | Parameters | Description |
+|---|---|---|
+| `flowscope_analyze` | `path` | Index and parse a codebase into IR nodes, edges, and function CFGs. |
+| `flowscope_flow` | `path`, `functionId`, `maxDepth?` | Get inter-procedural CFG with inlined callee methods. |
+| `flowscope_flow_description` | `path`, `functionId`, `maxDepth?` | Step-by-step human-readable execution walkthrough. |
+| `flowscope_sequence` | `path`, `functionId`, `maxDepth?` | Complete Mermaid `sequenceDiagram` markdown with participant list. |
+| `flowscope_component` | `path` | Spring beans classified by layer with dependency injection & call edges. |
+| `flowscope_architecture` | `path` | Layered architecture view with datastores, Kafka topics, and external APIs. |
+| `flowscope_servicemap` | `path`, `exclude?` | Multi-service workspace topology across Java, Go, Python, and TypeScript. |
+| `flowscope_business_logic` | `path`, `functionId`, `maxDepth?` | Narrative explanation of business intent, rules enforced, and phases. |
+| `flowscope_llm_status` | none | Check whether an external LLM is configured for narrative generation. |
+
+### Configuration Example (`claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "flowscope": {
+      "command": "java",
+      "args": [
+        "-jar",
+        "/path/to/Flowscope/backend/target/flowscope-web.jar",
+        "--mcp"
+      ]
+    }
+  }
+}
+```
 
 ---
 

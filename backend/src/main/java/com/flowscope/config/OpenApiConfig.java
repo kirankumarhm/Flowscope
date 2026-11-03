@@ -35,6 +35,7 @@ public class OpenApiConfig {
                                 - **Component** (`/api/component`) — a single app's Spring beans and their dependencies.
                                 - **Architecture** (`/api/architecture`) — a single app's layered architecture + external resources.
                                 - **Service Map** (`/api/servicemap`) — the service-to-service topology of a whole workspace.
+                                - **MCP Server** (`/mcp/sse`, `/mcp/message`) — Model Context Protocol endpoints for AI coding agents.
 
                                 `/api/analyze` returns the raw IR (nodes, edges, per-function CFGs) that backs the Flow view.
                                 """)
