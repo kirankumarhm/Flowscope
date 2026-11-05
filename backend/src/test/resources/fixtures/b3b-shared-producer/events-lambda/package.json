@@ -1,0 +1,5 @@
+{
+  "name": "events-lambda",
+  "description": "lambda",
+  "dependencies": {"@types/aws-lambda": "8.10.0"}
+}

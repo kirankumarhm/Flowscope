@@ -1,0 +1,7 @@
+hosts:
+  api.corp.io/admin/*: reports-dashboard
+triggers:
+  orders-lambda:commandConsumer: { consumes: [orders-commands] }
+externals:
+  partner.corp.io: Partner Billing API
+ignore: [legacy/]

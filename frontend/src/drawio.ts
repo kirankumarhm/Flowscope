@@ -25,7 +25,7 @@ const SHAPE_STYLE: Record<string, string> = {
   barrel: 'shape=cylinder3;boundedLbl=1;backgroundOutline=1;',
 };
 
-function xmlEscape(s: string): string {
+export function xmlEscape(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -35,7 +35,7 @@ function xmlEscape(s: string): string {
 }
 
 // Normalize any CSS color Cytoscape reports (rgb/rgba/#rgb/#rrggbb) to #rrggbb.
-function toHex(color: unknown): string {
+export function toHex(color: unknown): string {
   const c = String(color ?? '').trim();
   if (!c) return '#ffffff';
   if (c.startsWith('#')) {

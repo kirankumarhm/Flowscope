@@ -168,8 +168,9 @@ export async function fetchLlmStatus(): Promise<LlmStatus> {
 }
 
 /**
- * Fetch the high-level layered architecture view for a single app.
- * Calls GET /api/architecture?path=<app-dir>.
+ * Fetch the whole-project architecture view. Calls GET /api/architecture?path=<dir>.
+ * The path may be the project folder or any service inside it; a service path
+ * comes back as the `focus` of the whole project's view.
  */
 export async function fetchArchitecture(path: string): Promise<Architecture> {
   try {

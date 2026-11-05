@@ -30,6 +30,10 @@ import java.util.stream.Stream;
  */
 public final class ConfigIndex {
 
+    /** Where a config key was defined: file, 1-based line, and the trimmed line text. */
+    public record Loc(Path file, int line, String text) {
+    }
+
     /** dotted YAML/properties key -> value (prod-preferred). */
     private final Map<String, String> props = new LinkedHashMap<>();
     /** .env variable -> value (prod-preferred). */
@@ -38,6 +42,15 @@ public final class ConfigIndex {
     private final Map<String, String> constants = new HashMap<>();
     /** Java @Value field name -> resolved literal. */
     private final Map<String, String> valueFields = new HashMap<>();
+    /** Java @Value field name -> the config key it is bound to (first file wins). */
+    private final Map<String, String> valueFieldKeys = new HashMap<>();
+    /** Per source file: @Value field/parameter name -> config key. */
+    private final Map<Path, Map<String, String>> valueFieldKeysByFile = new HashMap<>();
+    /** Definition site of each props / env key (the file that won, prod over base). */
+    private final Map<String, Loc> propLoc = new HashMap<>();
+    private final Map<String, Loc> envLoc = new HashMap<>();
+    private static final Pattern ANGULAR_ENTRY_RE = Pattern.compile(
+            "(\\w+)\\s*:\\s*(?:(['\"`])((?:(?!\\2).)*)\\2|(\\{))|(\\})");
 
     private static final Pattern CONST_RE = Pattern.compile(
             "static\\s+final\\s+String\\s+(\\w+)\\s*=\\s*\"([^\"]*)\"");
@@ -45,6 +58,9 @@ public final class ConfigIndex {
             "@Value\\(\\s*\"\\$\\{([^}\"]*)}\"\\s*\\)\\s*(?:private\\s+|public\\s+|protected\\s+|final\\s+|static\\s+)*"
                     + "(?:final\\s+)?String\\s+(\\w+)");
     private static final Pattern PLACEHOLDER_RE = Pattern.compile("\\$\\{([^}]*)}");
+    /** {@code .env.device-prod}, {@code .env.prod-eu}, {@code .env.api.production}: prod env files of one variant. */
+    private static final Pattern PROD_ENV_VARIANT = Pattern.compile(
+            "\\.env[.-](?:[\\w]+[.-])?(?:prod|production)(?:[.-][\\w]+)?");
     // Go: `const Topic = "x"`, grouped `Topic = "x"` inside const(), and short-var
     // `topic := "x"`. Over-captures generic assignments, but that only matters when a
     // reference token actually resolves against the name, so it is harmless.
@@ -69,6 +85,7 @@ public final class ConfigIndex {
         idx.loadGo(dir);
         idx.loadPython(dir);
         idx.loadPlainConfig(dir);
+        idx.loadAngularEnv(dir);
         return idx;
     }
 
@@ -78,6 +95,55 @@ public final class ConfigIndex {
 
     public Map<String, String> env() {
         return env;
+    }
+
+    /** Java constant name -> literal (Java, Go, Python string constants). */
+    public Map<String, String> constants() {
+        return constants;
+    }
+
+    /** {@code @Value} field name -> resolved value. */
+    public Map<String, String> valueFields() {
+        return valueFields;
+    }
+
+    /** {@code @Value} field name -> the config key it reads. */
+    public Map<String, String> valueFieldKeys() {
+        return valueFieldKeys;
+    }
+
+    /** Per file: {@code @Value} field/parameter name -> config key. */
+    public Map<Path, Map<String, String>> valueFieldKeysByFile() {
+        return valueFieldKeysByFile;
+    }
+
+    /** Where a props key was defined, or null. */
+    public Loc propLocation(String key) {
+        return propLoc.get(key);
+    }
+
+    /** Where an env var was defined, or null. */
+    public Loc envLocation(String key) {
+        return envLoc.get(key);
+    }
+
+    /** Resolve {@code ${a}}/{@code ${a:def}} placeholders inside a value (e.g. a JDBC URL). */
+    public String expand(String value) {
+        if (value == null || !value.contains("${")) {
+            return value;
+        }
+        Matcher m = PLACEHOLDER_RE.matcher(value);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String inner = m.group(1);
+            int colon = inner.indexOf(':');
+            String key = (colon >= 0 ? inner.substring(0, colon) : inner).trim();
+            String def = colon >= 0 ? inner.substring(colon + 1) : null;
+            String val = firstNonNull(props.get(key), env.get(key), def);
+            m.appendReplacement(sb, Matcher.quoteReplacement(val != null ? val : m.group()));
+        }
+        m.appendTail(sb);
+        return sb.toString();
     }
 
     /**
@@ -197,7 +263,7 @@ public final class ConfigIndex {
             return;
         }
         // Only the base + prod profiles: merging dev/qa/stage/stage2 pollutes names
-        // with env-suffixed values (e.g. orders-created-stage2). Base loads
+        // with env-suffixed values. Base loads
         // first, prod last so prod wins; keys defined by neither fall back to the
         // @Value/inline default, which is the canonical name.
         List<Path> base = new ArrayList<>();
@@ -218,9 +284,9 @@ public final class ConfigIndex {
         for (Path p : base) {
             String name = p.getFileName().toString();
             if (name.endsWith(".properties")) {
-                loadProperties(WorkspaceScanner.read(p));
+                loadProperties(WorkspaceScanner.read(p), p);
             } else {
-                flattenYaml(WorkspaceScanner.read(p));
+                flattenYaml(WorkspaceScanner.read(p), p);
             }
         }
     }
@@ -240,24 +306,30 @@ public final class ConfigIndex {
         return profile.equals("prod") || profile.equals("production") ? "prod" : null;
     }
 
-    private void loadProperties(String text) {
+    private void loadProperties(String text, Path file) {
+        int lineNo = 0;
         for (String line : text.split("\n")) {
+            lineNo++;
             String t = line.trim();
             if (t.isEmpty() || t.startsWith("#") || t.startsWith("!")) {
                 continue;
             }
             int eq = t.indexOf('=');
             if (eq > 0) {
-                props.put(t.substring(0, eq).trim(), stripInlineComment(t.substring(eq + 1).trim()));
+                String key = t.substring(0, eq).trim();
+                props.put(key, stripInlineComment(t.substring(eq + 1).trim()));
+                propLoc.put(key, new Loc(file, lineNo, SourceIndex.clip(t)));
             }
         }
     }
 
     /** Minimal indentation-based YAML flattener for scalar leaves. */
-    private void flattenYaml(String yaml) {
+    private void flattenYaml(String yaml, Path file) {
         List<String> keyStack = new ArrayList<>();
         List<Integer> indentStack = new ArrayList<>();
+        int lineNo = 0;
         for (String raw : yaml.split("\n")) {
+            lineNo++;
             String line = raw.replace("\t", "  ");
             String trimmed = line.trim();
             if (trimmed.isEmpty() || trimmed.startsWith("#") || trimmed.startsWith("-")) {
@@ -281,6 +353,7 @@ public final class ConfigIndex {
                 String dotted = keyStack.isEmpty() ? key : String.join(".", keyStack) + "." + key;
                 // Last write wins, so the prod file (loaded last) overrides the base.
                 props.put(dotted, unquote(stripInlineComment(value)));
+                propLoc.put(dotted, new Loc(file, lineNo, SourceIndex.clip(trimmed)));
             }
         }
     }
@@ -288,6 +361,7 @@ public final class ConfigIndex {
     private void loadEnv(Path dir) {
         List<Path> ordered = new ArrayList<>();
         Path prod = null;
+        List<Path> prodVariants = new ArrayList<>();
         for (String sub : List.of("resources", "", "config", "env")) {
             Path base = sub.isEmpty() ? dir : dir.resolve(sub);
             if (!Files.isDirectory(base)) {
@@ -302,6 +376,9 @@ public final class ConfigIndex {
                         ordered.add(p);
                     } else if (n.equals(".env.prod") || n.equals(".env.production")) {
                         prod = p;
+                    } else if (PROD_ENV_VARIANT.matcher(n).matches()) {
+                        // One package deployed several ways: .env.device-prod, .env.prod-eu, …
+                        prodVariants.add(p);
                     }
                 }
             } catch (IOException e) {
@@ -310,17 +387,72 @@ public final class ConfigIndex {
         }
         if (prod != null) {
             ordered.add(prod); // prod last so it wins
+        } else {
+            ordered.addAll(prodVariants);
         }
         for (Path p : ordered) {
+            int lineNo = 0;
             for (String line : WorkspaceScanner.read(p).split("\n")) {
+                lineNo++;
                 String t = line.trim();
                 if (t.isEmpty() || t.startsWith("#")) {
                     continue;
                 }
+                if (t.startsWith("export ")) {
+                    t = t.substring("export ".length()).trim();
+                }
                 int eq = t.indexOf('=');
                 if (eq > 0) {
-                    env.put(t.substring(0, eq).trim(), unquote(t.substring(eq + 1).trim()));
+                    String key = t.substring(0, eq).trim();
+                    env.put(key, unquote(stripInlineComment(t.substring(eq + 1).trim())));
+                    envLoc.put(key, new Loc(p, lineNo, SourceIndex.clip(t)));
                 }
+            }
+        }
+    }
+
+    /**
+     * Angular-style {@code src/environments/environment.prod.ts} (falling back to
+     * {@code environment.ts} when there is no prod file), flattened into props as
+     * {@code environment.<key>} so {@code environment.serverUri} in code resolves.
+     */
+    private void loadAngularEnv(Path dir) {
+        Path envDir = dir.resolve("src").resolve("environments");
+        if (!Files.isDirectory(envDir)) {
+            return;
+        }
+        Path chosen = null;
+        for (String n : List.of("environment.prod.ts", "environment.production.ts", "environment.ts")) {
+            if (Files.isRegularFile(envDir.resolve(n))) {
+                chosen = envDir.resolve(n);
+                break;
+            }
+        }
+        if (chosen == null) {
+            return;
+        }
+        String text = WorkspaceScanner.read(chosen);
+        List<String> stack = new ArrayList<>();
+        stack.add("environment");
+        Matcher m = ANGULAR_ENTRY_RE.matcher(text);
+        while (m.find()) {
+            if (m.group(5) != null) { // closing brace
+                if (stack.size() > 1) {
+                    stack.remove(stack.size() - 1);
+                }
+            } else if (m.group(4) != null) { // nested object
+                stack.add(m.group(1));
+            } else {
+                String key = String.join(".", stack) + "." + m.group(1);
+                props.put(key, m.group(3));
+                int line = 1;
+                for (int i = 0; i < m.start(); i++) {
+                    if (text.charAt(i) == '\n') {
+                        line++;
+                    }
+                }
+                propLoc.put(key, new Loc(chosen, line, SourceIndex.clip(text.substring(
+                        m.start(), Math.min(text.length(), m.end())).trim())));
             }
         }
     }
@@ -354,6 +486,16 @@ public final class ConfigIndex {
             // cortex.kafka.audit-topic = ${CORTEX_AUDIT_TOPIC:audit} — so unwrap it
             // to the concrete value/default rather than storing "${...}".
             String val = unwrapPlaceholder(props.getOrDefault(key.trim(), def));
+            valueFieldKeys.putIfAbsent(field, key.trim());
+            // Field names like "tableName" repeat across classes, so the binding is
+            // also kept per file. A constructor parameter copied into a field of
+            // another name (this.table = tableName) binds that field too.
+            Map<String, String> inFile = valueFieldKeysByFile.computeIfAbsent(p, k -> new HashMap<>());
+            inFile.putIfAbsent(field, key.trim());
+            Matcher alias = Pattern.compile("this\\.(\\w+)\\s*=\\s*" + Pattern.quote(field) + "\\s*;").matcher(text);
+            while (alias.find()) {
+                inFile.putIfAbsent(alias.group(1), key.trim());
+            }
             if (val != null && !val.isBlank()) {
                 valueFields.putIfAbsent(field, val);
             }
@@ -377,7 +519,7 @@ public final class ConfigIndex {
         }
         try (Stream<Path> s = Files.walk(dir, 15)) {
             s.filter(p -> p.toString().endsWith(ext))
-                    .filter(p -> !isVendored(p))
+                    .filter(p -> !isVendored(dir.relativize(p)))
                     .forEach(p -> {
                         Matcher m = re.matcher(WorkspaceScanner.read(p));
                         while (m.find()) {
@@ -389,8 +531,10 @@ public final class ConfigIndex {
         }
     }
 
+    /** Dependency/build-output check on a service-relative path (so a workspace that
+     *  itself sits under e.g. {@code target/} is not treated as vendored). */
     private static boolean isVendored(Path p) {
-        String s = p.toString().replace('\\', '/');
+        String s = "/" + p.toString().replace('\\', '/');
         return s.contains("/vendor/") || s.contains("/node_modules/") || s.contains("/.venv/")
                 || s.contains("/venv/") || s.contains("/site-packages/") || s.contains("/__pycache__/")
                 || s.contains("/target/") || s.contains("/dist/") || s.contains("/build/");
@@ -409,9 +553,9 @@ public final class ConfigIndex {
                 for (Path p : s.filter(Files::isRegularFile).sorted().toList()) {
                     String n = p.getFileName().toString().toLowerCase();
                     if (n.matches("(config|app|application|settings)\\.(yml|yaml)")) {
-                        flattenYaml(WorkspaceScanner.read(p));
+                        flattenYaml(WorkspaceScanner.read(p), p);
                     } else if (n.matches("(config|app|application|settings)\\.toml")) {
-                        loadToml(WorkspaceScanner.read(p));
+                        loadToml(WorkspaceScanner.read(p), p);
                     }
                 }
             } catch (IOException e) {
@@ -421,15 +565,20 @@ public final class ConfigIndex {
     }
 
     /** Minimal TOML reader: flat {@code key = "value"} lines (sections ignored). */
-    private void loadToml(String text) {
+    private void loadToml(String text, Path file) {
+        int lineNo = 0;
         for (String line : text.split("\n")) {
+            lineNo++;
             String t = line.trim();
             if (t.isEmpty() || t.startsWith("#") || t.startsWith("[")) {
                 continue;
             }
             int eq = t.indexOf('=');
             if (eq > 0) {
-                props.putIfAbsent(t.substring(0, eq).trim(), unquote(stripInlineComment(t.substring(eq + 1).trim())));
+                String key = t.substring(0, eq).trim();
+                if (props.putIfAbsent(key, unquote(stripInlineComment(t.substring(eq + 1).trim()))) == null) {
+                    propLoc.put(key, new Loc(file, lineNo, SourceIndex.clip(t)));
+                }
             }
         }
     }

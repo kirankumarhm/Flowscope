@@ -1182,3 +1182,76 @@ body {
   from { transform: translateX(100%); }
   to { transform: translateX(0); }
 }
+
+/* --- Architecture view (whole project) --- */
+/* The canvas sits between the toolbar band and the footer so nothing covers the diagram. */
+.arch-wrap {
+  background: #ffffff;
+}
+
+.arch-wrap .flowchart-canvas {
+  top: 54px;
+  bottom: 58px;
+}
+
+/* Keep the detail panel below the toolbar and above the footer. */
+.arch-wrap .detail-panel {
+  top: 56px;
+  max-height: calc(100% - 140px);
+}
+
+.arch-footer {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  font-size: 12px;
+  color: var(--color-muted);
+  pointer-events: auto;
+}
+
+.arch-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  min-width: 0;
+}
+
+.arch-legend-item {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  color: var(--color-text);
+}
+
+.arch-legend-line {
+  display: inline-block;
+  width: 26px;
+  height: 0;
+  margin-right: 6px;
+}
+
+.arch-notes {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.arch-notes-more {
+  color: var(--color-accent);
+  font-weight: 600;
+}

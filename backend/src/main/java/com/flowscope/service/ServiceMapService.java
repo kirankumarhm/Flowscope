@@ -1,10 +1,7 @@
 package com.flowscope.service;
 
-import com.flowscope.dto.ServiceMap;
-import com.flowscope.service.ServiceMapBuilder;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -15,8 +12,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+
 import org.springframework.stereotype.Service;
+
+import com.flowscope.config.AllowedRoots;
+import com.flowscope.dto.ServiceMap;
 import com.flowscope.exception.ApiExceptions;
+import com.flowscope.util.PathParams;
 
 /**
  * Builds the whole-workspace {@link ServiceMap} on demand. Scanning a multi-app
@@ -27,7 +29,7 @@ public class ServiceMapService {
 
     private static final long TIMEOUT_SECONDS = 180;
 
-    /** Directories that are part of the workspace but not deployable apps. */
+    /** Directories always skipped. None by default; pass {@code exclude} or use flowscope.yml for yours. */
     private static final Set<String> DEFAULT_EXCLUDES = Set.of();
 
     private final Map<String, ServiceMap> cache = Collections.synchronizedMap(
@@ -42,13 +44,14 @@ public class ServiceMapService {
         if (pathParam == null || pathParam.isBlank()) {
             throw new ApiExceptions.MissingPathException("the 'path' query parameter is required");
         }
-        Path root = Paths.get(pathParam).toAbsolutePath().normalize();
+        Path root = PathParams.resolve(pathParam);
         if (!Files.exists(root)) {
             throw new ApiExceptions.InvalidPathException("path not found: " + root);
         }
         if (!Files.isDirectory(root)) {
             throw new ApiExceptions.InvalidPathException("not a directory: " + root);
         }
+        AllowedRoots.check(root);
 
         Set<String> excludes = new LinkedHashSet<>(DEFAULT_EXCLUDES);
         if (excludeParam != null && !excludeParam.isBlank()) {

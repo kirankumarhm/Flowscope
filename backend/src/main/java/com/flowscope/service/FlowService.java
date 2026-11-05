@@ -1,29 +1,25 @@
 package com.flowscope.service;
 
-import com.flowscope.dto.Architecture;
-import com.flowscope.service.ArchitectureBuilder;
-import com.flowscope.dto.ComponentMap;
-import com.flowscope.service.ComponentMapBuilder;
-import com.flowscope.service.JavaFlowBuilder;
-import com.flowscope.entity.JavaProgramModel;
-import com.flowscope.entity.JavaProgramModel.MethodInfo;
-import com.flowscope.service.JavaSequenceBuilder;
-import com.flowscope.dto.SequenceDiagram;
-import com.flowscope.service.DefaultFileWalker;
-import com.flowscope.entity.ProjectRoots;
-import com.flowscope.entity.SourceFile;
-import com.flowscope.entity.WalkResult;
-import com.flowscope.entity.CFG;
-import com.flowscope.service.LanguageRegistry;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+
 import org.springframework.stereotype.Service;
+
+import com.flowscope.config.AllowedRoots;
+import com.flowscope.dto.ComponentMap;
+import com.flowscope.dto.SequenceDiagram;
+import com.flowscope.entity.CFG;
+import com.flowscope.entity.JavaProgramModel;
+import com.flowscope.entity.JavaProgramModel.MethodInfo;
+import com.flowscope.entity.ProjectRoots;
+import com.flowscope.entity.SourceFile;
+import com.flowscope.entity.WalkResult;
 import com.flowscope.exception.ApiExceptions;
+import com.flowscope.util.PathParams;
 
 /**
  * Builds endpoint-rooted, inter-procedural flow charts on demand. The parsed
@@ -122,10 +118,11 @@ public class FlowService {
         if (functionId == null || functionId.isBlank()) {
             throw new ApiExceptions.MissingPathException("the 'functionId' query parameter is required");
         }
-        Path root = Paths.get(pathParam).toAbsolutePath().normalize();
+        Path root = PathParams.resolve(pathParam);
         if (!Files.isDirectory(root)) {
             throw new ApiExceptions.InvalidPathException("not a directory: " + root);
         }
+        AllowedRoots.check(root);
         String key = root + "#" + extractor.languageId();
         return new TsCfgs(goCache.computeIfAbsent(key, k -> buildTsCfgs(root, extractor)));
     }
@@ -164,28 +161,15 @@ public class FlowService {
         return ComponentMapBuilder.build(project, model);
     }
 
-    /** Build the high-level layered architecture view for the analyzed app. */
-    public Architecture architecture(String pathParam) {
-        Path root = validatedDir(pathParam);
-        String project = projectName(root);
-        WalkResult walk = new DefaultFileWalker(registry).walkAll(ProjectRoots.resolve(root));
-        String ts = treeSitterLang(walk);
-        if (ts != null) {
-            ComponentMap cm = TreeSitterComponentBuilder.build(project, walk.files(), ts);
-            return ArchitectureBuilder.build(project, cm, root);
-        }
-        JavaProgramModel model = cache.computeIfAbsent(root.toString(), key -> buildModel(root));
-        return ArchitectureBuilder.build(project, model, root);
-    }
-
     private Path validatedDir(String pathParam) {
         if (pathParam == null || pathParam.isBlank()) {
             throw new ApiExceptions.MissingPathException("the 'path' query parameter is required");
         }
-        Path root = Paths.get(pathParam).toAbsolutePath().normalize();
+        Path root = PathParams.resolve(pathParam);
         if (!Files.isDirectory(root)) {
             throw new ApiExceptions.InvalidPathException("not a directory: " + root);
         }
+        AllowedRoots.check(root);
         return root;
     }
 
@@ -227,10 +211,11 @@ public class FlowService {
         if (functionId == null || functionId.isBlank()) {
             throw new ApiExceptions.MissingPathException("the 'functionId' query parameter is required");
         }
-        Path root = Paths.get(pathParam).toAbsolutePath().normalize();
+        Path root = PathParams.resolve(pathParam);
         if (!Files.isDirectory(root)) {
             throw new ApiExceptions.InvalidPathException("not a directory: " + root);
         }
+        AllowedRoots.check(root);
         JavaProgramModel model = cache.computeIfAbsent(root.toString(), key -> buildModel(root));
         MethodInfo entry = model.method(functionId);
         if (entry == null) {

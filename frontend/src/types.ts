@@ -162,13 +162,26 @@ export interface SmNode {
   meta?: Record<string, unknown>;
 }
 
-// kind: produces | consumes | rest | reads | writes
+// kind: produces | consumes | rest | soap | reference | grpc | reads | writes | uses | triggers
+// confidence: declared | code | config | inferred | unresolved
 export interface SmEdge {
   id: string;
   source: string;
   target: string;
   kind: string;
   label?: string;
+  confidence?: Confidence;
+  evidence?: SmEvidence[];
+}
+
+export type Confidence = 'declared' | 'code' | 'config' | 'inferred' | 'unresolved';
+
+// Where an edge comes from; file is relative to ServiceMap.workspace (or the app).
+export interface SmEvidence {
+  file?: string;
+  line: number;
+  snippet?: string;
+  via?: string;
 }
 
 export interface SmStats {
@@ -219,37 +232,78 @@ export interface CmpStats {
   notes: string[];
 }
 
-// --- Architecture: high-level layered view of one app ----------------------
+// --- Architecture: the whole project in columns ------------------------------
 
+// A folder with several services is shown as a project; a folder with one service as that application.
 export interface Architecture {
   project: string;
+  workspace: string;
+  // Application scope: id of the application's node. Project scope: null.
+  focus?: string | null;
+  columns: ArchColumn[];
   nodes: ArchNode[];
   edges: ArchEdge[];
   stats: ArchStats;
+  scope: 'project' | 'application';
+  // Application scope: the application's layers (lanes) and their component groups.
+  app?: ArchApp | null;
 }
 
-// type: layer | datastore | topic | external
+export interface ArchApp {
+  id: string;
+  lanes: ArchLane[];
+}
+
+// id: entry | logic | access
+export interface ArchLane {
+  id: string;
+  title: string;
+  groups: ArchGroup[];
+}
+
+// A layer's components. The group is also a node (type "group"), so connections can start at it.
+export interface ArchGroup {
+  id: string;
+  title: string;
+  nodes: string[];
+}
+
+// id: frontends | apis | processing | messaging | data | external | cloud (+ connected | app for one application)
+export interface ArchColumn {
+  id: string;
+  title: string;
+  nodes: string[];
+}
+
+// type: ui | service | kafka | queue | trigger | grpc | datastore | external | cloud (+ group | component)
 export interface ArchNode {
   id: string;
   label: string;
   type: string;
   subtype: string;
-  count: number;
+  column: string;
+  detail: string;
+  meta?: Record<string, unknown>;
 }
 
-// kind: depends | uses | produces | consumes | calls
+// kind: rest | soap | grpc | async | sends | consumes | triggers | reads | writes | readwrite | uses
+// (+ inject | call between components inside one application)
 export interface ArchEdge {
   id: string;
   source: string;
   target: string;
   kind: string;
-  weight: number;
+  label?: string | null;
+  confidence?: Confidence;
+  items?: string[];
+  evidence?: SmEvidence[];
 }
 
 export interface ArchStats {
-  layers: number;
+  services: number;
   datastores: number;
-  topics: number;
+  messaging: number;
   externals: number;
+  connections: number;
   notes: string[];
 }

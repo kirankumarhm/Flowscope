@@ -1,0 +1,5 @@
+{
+  "name": "export-lambda",
+  "scripts": {"run": "./src/create-export.sh"},
+  "dependencies": {"@aws-sdk/client-secrets-manager": "3.0.0"}
+}

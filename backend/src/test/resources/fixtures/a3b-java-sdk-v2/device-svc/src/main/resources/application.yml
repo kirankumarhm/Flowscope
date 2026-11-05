@@ -1,0 +1,5 @@
+dynamodb:
+  table:
+    order-index: prod-OrderIndex
+    sku-index: prod-SkuIndex
+    cart-state: prod-CartState

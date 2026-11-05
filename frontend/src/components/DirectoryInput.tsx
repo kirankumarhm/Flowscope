@@ -7,13 +7,25 @@ interface DirectoryInputProps {
   initialValue?: string;
 }
 
+/**
+ * Trim the path and drop one pair of matching quotes around it, as added by
+ * Finder's "Copy as Pathname" or a shell ('/a b/c' or "/a b/c").
+ */
+function unquote(raw: string): string {
+  const p = raw.trim();
+  if (p.length >= 2 && (p[0] === "'" || p[0] === '"') && p[p.length - 1] === p[0]) {
+    return p.slice(1, -1).trim();
+  }
+  return p;
+}
+
 export default function DirectoryInput({ onAnalyze, loading, initialValue = '' }: DirectoryInputProps) {
   const [path, setPath] = useState(initialValue);
 
   const submit = () => {
-    const trimmed = path.trim();
-    if (trimmed.length > 0 && !loading) {
-      onAnalyze(trimmed);
+    const cleaned = unquote(path);
+    if (cleaned.length > 0 && !loading) {
+      onAnalyze(cleaned);
     }
   };
 
@@ -35,7 +47,7 @@ export default function DirectoryInput({ onAnalyze, loading, initialValue = '' }
         disabled={loading}
         spellCheck={false}
       />
-      <button className="button" onClick={submit} disabled={loading || path.trim().length === 0}>
+      <button className="button" onClick={submit} disabled={loading || unquote(path).length === 0}>
         {loading ? 'Analyzing…' : 'Analyze'}
       </button>
     </div>

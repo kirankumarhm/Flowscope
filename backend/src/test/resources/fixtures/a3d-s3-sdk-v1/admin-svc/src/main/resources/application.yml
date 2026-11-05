@@ -1,0 +1,4 @@
+aws:
+  buckets:
+    software: soft-bucket
+    exports: export-bucket

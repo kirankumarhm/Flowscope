@@ -1,0 +1,16 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.4.1</version>
+  </parent>
+  <groupId>com.example</groupId>
+  <artifactId>billing-svc</artifactId>
+  <dependencies>
+  </dependencies>
+  <build><plugins><plugin>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-maven-plugin</artifactId>
+  </plugin></plugins></build>
+</project>

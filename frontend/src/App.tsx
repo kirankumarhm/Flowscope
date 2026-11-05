@@ -211,7 +211,7 @@ export default function App() {
     };
   }, [view, analyzedPath]);
 
-  // Fetch the high-level architecture view when that view is active (per-app, cached).
+  // Fetch the whole-project architecture view when that view is active.
   useEffect(() => {
     if (view !== 'architecture' || !analyzedPath) {
       return;
@@ -372,9 +372,11 @@ export default function App() {
             <div className="sm-sidebar-note">
               <div className="function-picker-label">Architecture</div>
               <p>
-                High-level view of the analyzed service — its layers (controllers →
-                services → repositories → clients) as aggregate boxes, plus the
-                datastores, Kafka topics, and external systems it depends on.
+                A folder with several services shows the whole project in columns:
+                front ends, APIs, processing, messaging, data stores, external systems
+                and cloud services. One service&apos;s folder shows that application: its
+                components by layer, and everything it connects to. Click a box or a
+                line for details; export to PNG, SVG or draw.io.
               </p>
             </div>
           ) : (
@@ -474,7 +476,7 @@ export default function App() {
                 arch={architecture}
                 loading={archLoading}
                 error={archError}
-                filename={graph ? `${graph.project}_architecture` : 'architecture'}
+                filename={architecture ? `${architecture.project}_architecture` : 'architecture'}
               />
             )}
             {view === 'servicemap' && (

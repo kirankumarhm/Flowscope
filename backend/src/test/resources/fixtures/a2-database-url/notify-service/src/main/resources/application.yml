@@ -1,0 +1,3 @@
+notifications:
+  database-url: https://example-app.firebaseio.com
+  base-url: https://push.notifyhub.io

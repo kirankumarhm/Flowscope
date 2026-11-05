@@ -1,26 +1,23 @@
 package com.flowscope.service;
 
-import com.flowscope.service.DefaultParserEngine;
-import com.flowscope.service.ParserEngine;
-import com.flowscope.service.DefaultFileWalker;
-import com.flowscope.service.FileWalker;
-import com.flowscope.entity.ProjectRoots;
-import com.flowscope.entity.WalkResult;
-import com.flowscope.entity.Graph;
-import com.flowscope.service.IRBuilder;
-import com.flowscope.entity.ExtractionResult;
-import com.flowscope.service.LanguageRegistry;
 import java.lang.management.ManagementFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+
 import org.springframework.stereotype.Service;
+
+import com.flowscope.config.AllowedRoots;
+import com.flowscope.entity.ExtractionResult;
+import com.flowscope.entity.Graph;
+import com.flowscope.entity.ProjectRoots;
+import com.flowscope.entity.WalkResult;
 import com.flowscope.exception.ApiExceptions;
+import com.flowscope.util.PathParams;
 
 /**
  * Orchestrates the analysis pipeline: File Walker → Parser Engine → IR Builder.
@@ -54,13 +51,14 @@ public class AnalysisService {
         }
 
         // Requirement 6.7: resolve relative paths to absolute before validating.
-        Path root = Paths.get(pathParam).toAbsolutePath().normalize();
+        Path root = PathParams.resolve(pathParam);
         if (!Files.exists(root)) {
             throw new ApiExceptions.InvalidPathException("path not found: " + root);
         }
         if (!Files.isDirectory(root)) {
             throw new ApiExceptions.InvalidPathException("not a directory: " + root);
         }
+        AllowedRoots.check(root);
 
         CompletableFuture<Graph> future = CompletableFuture.supplyAsync(() -> runPipeline(root));
         try {

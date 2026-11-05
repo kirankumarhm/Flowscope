@@ -15,6 +15,7 @@ import com.flowscope.mcp.model.McpModels.ParameterProperty;
 import com.flowscope.mcp.model.McpModels.ToolDefinition;
 import com.flowscope.mcp.model.McpModels.ToolInputSchema;
 import com.flowscope.service.AnalysisService;
+import com.flowscope.service.ArchitectureService;
 import com.flowscope.service.BusinessLogicService;
 import com.flowscope.service.FlowDescriptionService;
 import com.flowscope.service.FlowService;
@@ -37,6 +38,7 @@ public class FlowScopeMcpToolHandler {
     private final FlowDescriptionService descriptionService;
     private final ServiceMapService serviceMapService;
     private final BusinessLogicService businessLogicService;
+    private final ArchitectureService architectureService;
     private final ObjectMapper objectMapper;
 
     public FlowScopeMcpToolHandler(
@@ -45,12 +47,14 @@ public class FlowScopeMcpToolHandler {
             FlowDescriptionService descriptionService,
             ServiceMapService serviceMapService,
             BusinessLogicService businessLogicService,
+            ArchitectureService architectureService,
             ObjectMapper objectMapper) {
         this.analysisService = analysisService;
         this.flowService = flowService;
         this.descriptionService = descriptionService;
         this.serviceMapService = serviceMapService;
         this.businessLogicService = businessLogicService;
+        this.architectureService = architectureService;
         this.objectMapper = objectMapper;
     }
 
@@ -63,10 +67,22 @@ public class FlowScopeMcpToolHandler {
         // 1. flowscope_analyze
         tools.add(new ToolDefinition(
                 "flowscope_analyze",
-                "Analyzes and indexes a source codebase directory into a language-neutral Intermediate Representation (IR), returning modules, detected languages, classes, functions, and call graph stats.",
+                "Analyzes and indexes a source codebase directory into a language-neutral Intermediate Representation (IR). The default summary lists modules, languages, counts and entry points (with their functionIds); format=json returns the whole IR.",
                 new ToolInputSchema(
                         "object",
-                        Map.of("path", ParameterProperty.of("string", "Absolute path to the source repository directory")),
+                        Map.of("path", ParameterProperty.of("string", "Absolute path to the source repository directory"),
+                                "format", ParameterProperty.ofEnum("Output format (default summary)", "summary",
+                                        List.of("summary", "json"))),
+                        List.of("path"))));
+
+        // 1b. flowscope_find_entry_points
+        tools.add(new ToolDefinition(
+                "flowscope_find_entry_points",
+                "Finds functions and HTTP endpoints whose path, name or file matches a query, returning the functionId to pass to flowscope_flow, flowscope_sequence or flowscope_business_logic. With no query, lists every endpoint and main().",
+                new ToolInputSchema(
+                        "object",
+                        Map.of("path", ParameterProperty.of("string", "Absolute path to the analyzed application root"),
+                                "query", ParameterProperty.of("string", "Case-insensitive text to match, e.g. /orders or placeOrder")),
                         List.of("path"))));
 
         // 2. flowscope_flow
@@ -117,21 +133,29 @@ public class FlowScopeMcpToolHandler {
         // 6. flowscope_architecture
         tools.add(new ToolDefinition(
                 "flowscope_architecture",
-                "Generates the high-level layered architecture view for an application: architectural layers, cross-layer dependencies, and attached external resources (datastores, Kafka topics, external APIs).",
+                "Generates an architecture view. A folder with several services gives the whole project: every deployable service grouped into front ends, APIs and processing, with their queues, data stores (one per table/bucket/database), external systems and cloud services, and the connections between them. A folder with one service gives that application: its components by layer, one Kafka box with its topics, and the services, queues, data stores, external systems and cloud services it connects to, each connection starting at the layer whose code makes it. Default output is a compact summary.",
                 new ToolInputSchema(
                         "object",
-                        Map.of("path", ParameterProperty.of("string", "Absolute path to the single application directory")),
+                        Map.of("path", ParameterProperty.of("string", "Absolute path to a project folder (several services) or to one service's folder"),
+                                "exclude", ParameterProperty.of("string", "Optional comma-separated directory names to exclude"),
+                                "format", ParameterProperty.ofEnum("Output format (default summary)", "summary",
+                                        List.of("summary", "json"))),
                         List.of("path"))));
 
         // 7. flowscope_servicemap
         tools.add(new ToolDefinition(
                 "flowscope_servicemap",
-                "Discovers multi-service workspace topology across languages (Java, TypeScript, Python, Go) and maps inter-service communication (Kafka topics, REST APIs, gRPC, shared datastores).",
+                "Discovers multi-service workspace topology across languages (Java, TypeScript, Python, Go) and maps inter-service communication (Kafka topics, REST/SOAP calls, gRPC, shared datastores, cloud SDKs, Lambda triggers). Every edge has a confidence (declared, code, config, inferred, unresolved) and file:line evidence. Default output is a compact summary, one line per edge.",
                 new ToolInputSchema(
                         "object",
                         Map.of(
                                 "path", ParameterProperty.of("string", "Workspace directory that contains multiple services"),
-                                "exclude", ParameterProperty.of("string", "Optional comma-separated directory names to exclude")),
+                                "exclude", ParameterProperty.of("string", "Optional comma-separated directory names to exclude"),
+                                "format", ParameterProperty.ofEnum("Output format (default summary)", "summary",
+                                        List.of("summary", "mermaid", "json")),
+                                "service", ParameterProperty.of("string", "Only edges touching these services (comma-separated names)"),
+                                "kind", ParameterProperty.of("string", "Only these edge kinds: kafka, rest, soap, datastore, grpc, cloud, trigger, reference (comma-separated)"),
+                                "confidence", ParameterProperty.of("string", "Only these confidence levels: declared, code, config, inferred, unresolved (comma-separated)")),
                         List.of("path"))));
 
         // 8. flowscope_business_logic
@@ -162,6 +186,7 @@ public class FlowScopeMcpToolHandler {
         try {
             return switch (name) {
                 case "flowscope_analyze" -> callAnalyze(args);
+                case "flowscope_find_entry_points" -> callFindEntryPoints(args);
                 case "flowscope_flow" -> callFlow(args);
                 case "flowscope_flow_description" -> callFlowDescription(args);
                 case "flowscope_sequence" -> callSequence(args);
@@ -181,7 +206,20 @@ public class FlowScopeMcpToolHandler {
     private CallToolResult callAnalyze(JsonNode args) throws Exception {
         String path = getString(args, "path");
         Graph graph = analysisService.analyze(path);
-        return CallToolResult.text(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(graph));
+        if ("json".equalsIgnoreCase(getString(args, "format"))) {
+            return CallToolResult.text(json(graph));
+        }
+        return CallToolResult.text(McpFormats.analyzeSummary(graph));
+    }
+
+    private CallToolResult callFindEntryPoints(JsonNode args) throws Exception {
+        Graph graph = analysisService.analyze(getString(args, "path"));
+        return CallToolResult.text(McpFormats.findEntryPoints(graph, getString(args, "query")));
+    }
+
+    /** Compact JSON: pretty-printing roughly doubles the size agents have to read. */
+    private String json(Object value) throws Exception {
+        return objectMapper.writeValueAsString(value);
     }
 
     private CallToolResult callFlow(JsonNode args) throws Exception {
@@ -189,7 +227,7 @@ public class FlowScopeMcpToolHandler {
         String functionId = getString(args, "functionId");
         Integer maxDepth = getInteger(args, "maxDepth");
         CFG cfg = flowService.flow(path, functionId, maxDepth);
-        return CallToolResult.text(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(cfg));
+        return CallToolResult.text(json(cfg));
     }
 
     private CallToolResult callFlowDescription(JsonNode args) throws Exception {
@@ -210,7 +248,7 @@ public class FlowScopeMcpToolHandler {
           .append(desc.stats().methods()).append(" methods inlined.\n\n");
         sb.append("```text\n").append(desc.text()).append("\n```\n\n");
         sb.append("Full JSON Details:\n");
-        sb.append(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(desc));
+        sb.append(json(desc));
         return CallToolResult.text(sb.toString());
     }
 
@@ -230,20 +268,33 @@ public class FlowScopeMcpToolHandler {
     private CallToolResult callComponent(JsonNode args) throws Exception {
         String path = getString(args, "path");
         ComponentMap componentMap = flowService.componentMap(path);
-        return CallToolResult.text(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(componentMap));
+        return CallToolResult.text(json(componentMap));
     }
 
     private CallToolResult callArchitecture(JsonNode args) throws Exception {
-        String path = getString(args, "path");
-        Architecture architecture = flowService.architecture(path);
-        return CallToolResult.text(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(architecture));
+        Architecture architecture = architectureService.architecture(getString(args, "path"), getString(args, "exclude"));
+        if ("json".equalsIgnoreCase(getString(args, "format"))) {
+            return CallToolResult.text(json(architecture));
+        }
+        return CallToolResult.text(McpFormats.architectureSummary(architecture));
     }
 
     private CallToolResult callServiceMap(JsonNode args) throws Exception {
         String path = getString(args, "path");
         String exclude = getString(args, "exclude");
-        ServiceMap serviceMap = serviceMapService.serviceMap(path, exclude);
-        return CallToolResult.text(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(serviceMap));
+        ServiceMap serviceMap = McpFormats.filter(serviceMapService.serviceMap(path, exclude),
+                getString(args, "service"), getString(args, "kind"), getString(args, "confidence"));
+        String format = getString(args, "format");
+        if (format == null || format.isBlank() || format.equalsIgnoreCase("summary")) {
+            return CallToolResult.text(McpFormats.summary(serviceMap));
+        }
+        if (format.equalsIgnoreCase("mermaid")) {
+            return CallToolResult.text(McpFormats.mermaid(serviceMap));
+        }
+        if (format.equalsIgnoreCase("json")) {
+            return CallToolResult.text(json(serviceMap));
+        }
+        return CallToolResult.error("Unknown format '" + format + "'; use summary, mermaid or json");
     }
 
     private CallToolResult callBusinessLogic(JsonNode args) throws Exception {
@@ -251,14 +302,14 @@ public class FlowScopeMcpToolHandler {
         String functionId = getString(args, "functionId");
         Integer maxDepth = getInteger(args, "maxDepth");
         BusinessLogic logic = businessLogicService.analyze(path, functionId, maxDepth);
-        return CallToolResult.text(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(logic));
+        return CallToolResult.text(json(logic));
     }
 
     private CallToolResult callLlmStatus() throws Exception {
         Map<String, Object> status = Map.of(
                 "available", businessLogicService.llmAvailable(),
                 "provider", businessLogicService.providerDescription());
-        return CallToolResult.text(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(status));
+        return CallToolResult.text(json(status));
     }
 
     private static String getString(JsonNode node, String field) {

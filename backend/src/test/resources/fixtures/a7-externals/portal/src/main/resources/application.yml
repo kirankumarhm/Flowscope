@@ -1,0 +1,6 @@
+billing:
+  base-url: https://api.corp.io/billing/v1
+identity:
+  base-url: https://api.corp.io/identity/v2
+smartsheet:
+  base-url: https://api.smartsheet.example.net

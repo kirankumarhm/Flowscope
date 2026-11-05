@@ -1,0 +1,5 @@
+{
+  "name": "admin-ui",
+  "scripts": {"start": "ng serve"},
+  "dependencies": {"@angular/core": "17.0.0"}
+}

@@ -1,0 +1,5 @@
+{
+  "name": "pipeline-lambda",
+  "description": "lambda",
+  "dependencies": {"@types/aws-lambda": "8.10.0"}
+}

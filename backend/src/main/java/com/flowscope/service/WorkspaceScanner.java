@@ -6,9 +6,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -46,8 +53,12 @@ public final class WorkspaceScanner {
         public final String appName;     // spring.application.name / package name (metadata)
         public final Path dir;           // absolute directory
         public final String language;    // java | typescript | javascript | go | python
-        public final String subtype;     // spring-boot | node-lambda | node-service | nestjs | nextjs | react | go-service | python-service | library
+        public final String subtype;     // spring-boot | node-lambda | node-service | nestjs | nextjs | react | angular | vue | go-service | python-service | container | library
         public final boolean library;
+        /** Ids of the workspace modules this one declares as build dependencies. */
+        public final Set<String> dependsOn = new LinkedHashSet<>();
+        /** Why a module was classified as a library (null for services). */
+        public String libraryReason;
 
         Service(String id, String dirName, String displayName, String appName, Path dir,
                 String language, String subtype, boolean library) {
@@ -60,6 +71,13 @@ public final class WorkspaceScanner {
             this.subtype = subtype;
             this.library = library;
         }
+
+        Service asLibrary(String reason) {
+            Service s = new Service(id, dirName, displayName, appName, dir, language, "library", true);
+            s.dependsOn.addAll(dependsOn);
+            s.libraryReason = reason;
+            return s;
+        }
     }
 
     /**
@@ -67,13 +85,21 @@ public final class WorkspaceScanner {
      * directory whose name is in {@code excludeDirs}.
      */
     public static List<Service> scan(Path workspace, Set<String> excludeDirs) {
+        return scan(workspace, excludeDirs, rel -> false);
+    }
+
+    /**
+     * As {@link #scan(Path, Set)}, also skipping workspace-relative paths for which
+     * {@code ignored} is true (the override file's {@code ignore:} list).
+     */
+    public static List<Service> scan(Path workspace, Set<String> excludeDirs, Predicate<String> ignored) {
         List<Service> services = new ArrayList<>();
         // Descend into the workspace looking for services. The root itself is never
         // treated as a single service here (a monorepo root often carries its own
         // package.json — e.g. CORTEX — which must not shadow the services nested
         // under services/, apps/, …); the single-app fallback below handles the
         // "user pointed straight at one app" case instead.
-        discover(workspace, workspace, services, excludeDirs, 0);
+        discover(workspace, workspace, services, excludeDirs, ignored, 0);
         // Fallback: the given path may itself be a single application directory
         // rather than a workspace of many (e.g. the user pointed at orders-api
         // instead of its parent). Discovering nothing from the children while the
@@ -83,7 +109,149 @@ public final class WorkspaceScanner {
             Path base = workspace.getParent() != null ? workspace.getParent() : workspace;
             collect(base, workspace, services);
         }
-        return services;
+        return classifyLibraries(services);
+    }
+
+    // --- library classification (modules other modules build against) ---------
+
+    private static final Pattern MAVEN_DEP = Pattern.compile(
+            "<dependency>[\\s\\S]*?<artifactId>\\s*([^<\\s]+)\\s*</artifactId>[\\s\\S]*?</dependency>");
+    private static final Pattern GRADLE_PROJECT_DEP = Pattern.compile("project\\(\\s*['\"]:?([\\w.-]+)['\"]\\s*\\)");
+    private static final Pattern PKG_DEPS = Pattern.compile(
+            "\"(?:dependencies|devDependencies|peerDependencies)\"\\s*:\\s*\\{([^}]*)}");
+    private static final Pattern PKG_DEP_NAME = Pattern.compile("\"([^\"]+)\"\\s*:");
+
+    /**
+     * Mark modules that other workspace modules declare as a build dependency as
+     * libraries, plus Spring Boot modules that are not packaged as an executable.
+     * Records each module's in-workspace dependencies on {@link Service#dependsOn}.
+     */
+    static List<Service> classifyLibraries(List<Service> services) {
+        Map<String, Service> byArtifact = new HashMap<>();
+        for (Service s : services) {
+            for (String a : artifactNames(s)) {
+                byArtifact.putIfAbsent(a, s);
+            }
+        }
+        Set<String> dependedOn = new HashSet<>();
+        for (Service s : services) {
+            for (String dep : declaredDeps(s)) {
+                Service target = byArtifact.get(dep);
+                if (target != null && target != s) {
+                    s.dependsOn.add(target.id);
+                    dependedOn.add(target.id);
+                }
+            }
+        }
+        List<Service> out = new ArrayList<>();
+        for (Service s : services) {
+            if (s.library) {
+                out.add(s);
+            } else if (dependedOn.contains(s.id) && !s.subtype.equals("container")) {
+                out.add(s.asLibrary("another workspace module depends on it"));
+            } else if (s.language.equals("java") && !isExecutableJar(s.dir)) {
+                out.add(s.asLibrary("not packaged as an executable (no spring-boot-maven-plugin)"));
+            } else {
+                out.add(s);
+            }
+        }
+        return out;
+    }
+
+    private static List<String> artifactNames(Service s) {
+        List<String> names = new ArrayList<>();
+        Path pom = s.dir.resolve("pom.xml");
+        Path pkg = s.dir.resolve("package.json");
+        if (Files.isRegularFile(pom)) {
+            String text = read(pom).replaceAll("(?s)<parent>.*?</parent>", "");
+            Matcher m = Pattern.compile("<artifactId>\\s*([^<\\s]+)\\s*</artifactId>").matcher(text);
+            if (m.find()) {
+                names.add(m.group(1));
+            }
+        } else if (Files.isRegularFile(pkg)) {
+            String json = read(pkg);
+            Matcher m = Pattern.compile("\"name\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
+            if (m.find()) {
+                names.add(m.group(1));
+            }
+        }
+        names.add(s.dirName);
+        return names;
+    }
+
+    private static List<String> declaredDeps(Service s) {
+        List<String> deps = new ArrayList<>();
+        Path pom = s.dir.resolve("pom.xml");
+        if (Files.isRegularFile(pom)) {
+            String text = read(pom).replaceAll("(?s)<dependencyManagement>.*?</dependencyManagement>", "")
+                    .replaceAll("(?s)<parent>.*?</parent>", "");
+            Matcher m = MAVEN_DEP.matcher(text);
+            while (m.find()) {
+                deps.add(m.group(1));
+            }
+        }
+        for (String gradle : List.of("build.gradle", "build.gradle.kts")) {
+            Path g = s.dir.resolve(gradle);
+            if (Files.isRegularFile(g)) {
+                Matcher m = GRADLE_PROJECT_DEP.matcher(read(g));
+                while (m.find()) {
+                    deps.add(m.group(1));
+                }
+            }
+        }
+        Path pkg = s.dir.resolve("package.json");
+        if (Files.isRegularFile(pkg)) {
+            Matcher block = PKG_DEPS.matcher(read(pkg));
+            while (block.find()) {
+                Matcher n = PKG_DEP_NAME.matcher(block.group(1));
+                while (n.find()) {
+                    deps.add(n.group(1));
+                }
+            }
+        }
+        return deps;
+    }
+
+    /**
+     * A Spring Boot module is executable when its pom (or a parent pom inside the
+     * workspace) applies spring-boot-maven-plugin outside {@code pluginManagement},
+     * or it is a war. A parent outside the workspace other than
+     * {@code spring-boot-starter-parent} can't be checked, so it counts as executable.
+     */
+    private static boolean isExecutableJar(Path dir) {
+        Path pom = dir.resolve("pom.xml");
+        for (int hops = 0; hops < 5 && Files.isRegularFile(pom); hops++) {
+            String text = read(pom);
+            if (text.contains("<packaging>war</packaging>")) {
+                return true;
+            }
+            String plugins = text.replaceAll("(?s)<pluginManagement>.*?</pluginManagement>", "");
+            if (plugins.contains("spring-boot-maven-plugin")) {
+                return true;
+            }
+            Matcher parent = Pattern.compile("(?s)<parent>(.*?)</parent>").matcher(text);
+            if (!parent.find()) {
+                return false;
+            }
+            String p = parent.group(1);
+            if (p.contains("spring-boot-starter-parent")) {
+                return false; // declares the plugin only in pluginManagement
+            }
+            Matcher rel = Pattern.compile("<relativePath>\\s*([^<]*)\\s*</relativePath>").matcher(p);
+            String relPath = rel.find() ? rel.group(1).trim() : "../pom.xml";
+            if (relPath.isEmpty()) {
+                return true; // parent comes from a repository: unknown, assume executable
+            }
+            Path next = pom.getParent().resolve(relPath).normalize();
+            if (Files.isDirectory(next)) {
+                next = next.resolve("pom.xml");
+            }
+            if (!Files.isRegularFile(next)) {
+                return true; // external parent: unknown, assume executable
+            }
+            pom = next;
+        }
+        return true;
     }
 
     /**
@@ -95,27 +263,80 @@ public final class WorkspaceScanner {
      * ({@code depth == 0}) is always descended, never collected as one service.
      */
     private static void discover(Path workspace, Path dir, List<Service> out,
-                                 Set<String> excludeDirs, int depth) {
+                                 Set<String> excludeDirs, Predicate<String> ignored, int depth) {
+        if (depth > 0 && ignored.test(rel(workspace, dir))) {
+            return;
+        }
         if (depth > 0 && isServiceDir(dir)) {
             collect(workspace, dir, out);
             return;
         }
-        if (depth >= MAX_DISCOVERY_DEPTH) {
-            return;
-        }
-        List<Path> children;
-        try (Stream<Path> s = Files.list(dir)) {
-            children = s.filter(Files::isDirectory).sorted().toList();
-        } catch (IOException e) {
-            return;
-        }
-        for (Path child : children) {
-            String name = fileName(child);
-            if (SKIP_DIRS.contains(name) || name.startsWith(".")
-                    || (depth == 0 && excludeDirs.contains(name))) {
-                continue;
+        int before = out.size();
+        if (depth < MAX_DISCOVERY_DEPTH) {
+            List<Path> children;
+            try (Stream<Path> s = Files.list(dir)) {
+                children = s.filter(Files::isDirectory).sorted().toList();
+            } catch (IOException e) {
+                return;
             }
-            discover(workspace, child, out, excludeDirs, depth + 1);
+            for (Path child : children) {
+                String name = fileName(child);
+                if (SKIP_DIRS.contains(name) || name.startsWith(".")
+                        || (depth == 0 && excludeDirs.contains(name))) {
+                    continue;
+                }
+                discover(workspace, child, out, excludeDirs, ignored, depth + 1);
+            }
+        }
+        // A container job with no build manifest (Dockerfile + shell scripts), and
+        // nothing discovered beneath it, is a service of its own.
+        if (depth > 0 && out.size() == before && isContainerJob(dir)) {
+            String dirName = fileName(dir);
+            out.add(new Service(rel(workspace, dir), dirName, dirName, dirName, dir, "shell", "container", false));
+        }
+    }
+
+    /** Direct subdirectories of {@code dir} that are services (have a build manifest or are container jobs). */
+    public static int countChildServices(Path dir) {
+        try (Stream<Path> s = Files.list(dir)) {
+            return (int) s.filter(Files::isDirectory)
+                    .filter(c -> !SKIP_DIRS.contains(fileName(c)) && !fileName(c).startsWith("."))
+                    .filter(c -> isServiceDir(c) || isContainerJob(c))
+                    .count();
+        } catch (IOException e) {
+            return 0;
+        }
+    }
+
+    /** True when a Node package's entry file exports a Lambda-style {@code handler}. */
+    private static boolean exportsHandler(Path dir) {
+        for (String f : List.of("index.ts", "index.js", "handler.ts", "handler.js", "app.ts", "app.js",
+                "src/index.ts", "src/index.js", "src/handler.ts", "src/handler.js", "src/app.ts", "src/app.js")) {
+            Path p = dir.resolve(f);
+            if (Files.isRegularFile(p) && HANDLER_EXPORT.matcher(read(p)).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static final Pattern HANDLER_EXPORT = Pattern.compile(
+            "export\\s+(?:const|let|async\\s+function|function)\\s+handler\\b|exports\\.handler\\s*=");
+
+    /** A directory holding a Dockerfile that runs a shell script or command of its own. */
+    static boolean isContainerJob(Path dir) {
+        Path dockerfile = ScriptScanner.dockerfile(dir);
+        if (dockerfile == null) {
+            return false;
+        }
+        String text = read(dockerfile);
+        if (text.contains(".sh") || text.contains("psql") || text.contains("aws ")) {
+            return true;
+        }
+        try (Stream<Path> s = Files.list(dir)) {
+            return s.anyMatch(p -> fileName(p).endsWith(".sh"));
+        } catch (IOException e) {
+            return false;
         }
     }
 
@@ -187,14 +408,22 @@ public final class WorkspaceScanner {
         // Next.js pulls in React, so it must be checked before plain React.
         boolean next = json.contains("\"next\"") || hasNextConfig(dir);
         boolean nest = json.contains("@nestjs/") || Files.isRegularFile(dir.resolve("nest-cli.json"));
+        boolean angular = json.contains("\"@angular/core\"") || Files.isRegularFile(dir.resolve("angular.json"));
+        boolean vue = json.contains("\"vue\"");
         boolean react = json.contains("\"react\"");
         boolean lambda = json.toLowerCase(Locale.ROOT).contains("lambda")
                 || json.contains("aws-lambda")
                 || Files.isRegularFile(dir.resolve("template.yaml"))
-                || Files.isRegularFile(dir.resolve("serverless.yml"));
-        boolean library = dirName.contains("common") || dirName.contains("utils");
+                || Files.isRegularFile(dir.resolve("serverless.yml"))
+                || exportsHandler(dir);
+        boolean runnable = json.matches("(?s).*\"(start|serve|dev)\"\\s*:.*") || json.contains("\"bin\"")
+                || Files.isRegularFile(dir.resolve("Dockerfile")) || Files.isRegularFile(dir.resolve("Procfile"));
+        boolean library = dirName.contains("common") || dirName.contains("utils")
+                || (!next && !nest && !angular && !vue && !react && !lambda && !runnable);
         String subtype = next ? "nextjs"
                 : nest ? "nestjs"
+                : angular ? "angular"
+                : vue ? "vue"
                 : react ? "react"
                 : library ? "library"
                 : lambda ? "node-lambda"
@@ -375,6 +604,43 @@ public final class WorkspaceScanner {
         }
         try {
             Files.walkFileTree(root, new java.nio.file.SimpleFileVisitor<>() {
+                @Override
+                public java.nio.file.FileVisitResult preVisitDirectory(
+                        Path dir, java.nio.file.attribute.BasicFileAttributes attrs) {
+                    String n = fileName(dir);
+                    if (!dir.equals(root) && (PRUNE_DIRS.contains(n) || n.startsWith("."))) {
+                        return java.nio.file.FileVisitResult.SKIP_SUBTREE;
+                    }
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public java.nio.file.FileVisitResult visitFile(
+                        Path file, java.nio.file.attribute.BasicFileAttributes attrs) {
+                    if (attrs.isRegularFile() && accept.test(fileName(file))) {
+                        action.accept(file);
+                    }
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public java.nio.file.FileVisitResult visitFileFailed(Path file, IOException exc) {
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException e) {
+            // best-effort
+        }
+    }
+
+    /** Walk regular files under {@code root} up to {@code maxDepth}, pruning dependency/build dirs. */
+    static void walkFiles(Path root, int maxDepth, java.util.function.Predicate<String> accept,
+                          java.util.function.Consumer<Path> action) {
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        try {
+            Files.walkFileTree(root, Set.of(), maxDepth, new java.nio.file.SimpleFileVisitor<>() {
                 @Override
                 public java.nio.file.FileVisitResult preVisitDirectory(
                         Path dir, java.nio.file.attribute.BasicFileAttributes attrs) {

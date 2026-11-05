@@ -1,0 +1,6 @@
+partner:
+  api:
+    base-url: https://api.partnerbilling.io
+legacy:
+  api:
+    base-url: https://legacy-crm.io

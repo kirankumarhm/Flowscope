@@ -1,0 +1,4 @@
+gateway:
+  base-url: https://api.corp.io/admin/reports
+partner:
+  base-url: https://partner.corp.io

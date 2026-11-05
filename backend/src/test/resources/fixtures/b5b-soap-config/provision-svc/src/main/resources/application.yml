@@ -1,0 +1,2 @@
+inventorysoap:
+  default-url: http://10.1.2.3:9080/axis2/services/DeviceProvisioning/

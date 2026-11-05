@@ -12,7 +12,7 @@ code and stay true to it.
 | 1 | **Flow Chart** | one function | How does this request flow, end to end (inter-procedural, calls inlined)? |
 | 2 | **Sequence** | one function | Which components talk, in what order, for this request? |
 | 3 | **Component** | one app | What are this service's Spring beans and how do they depend on each other? |
-| 4 | **Architecture** | one app | What are the layers, and which datastores / topics / external systems does it use? |
+| 4 | **Architecture** | a project or one app | Project: how do all its services, messaging, data stores and external systems fit together? One app: what are its layers, and what does each layer connect to? |
 | 5 | **Service Map** | a workspace | How do all the services talk — Kafka, REST, shared datastores, external systems? |
 
 The Flow Chart also explains itself in prose: **Describe flow** walks the graph step by step,
@@ -20,7 +20,7 @@ and **Business logic** says what the flow accomplishes — offline by default, o
 provider if you configure one (see **[LLM provider](#llm-provider-optional)**).
 
 - **Backend:** Java 21 · Spring Boot 3.4 · [JavaParser](https://javaparser.org/) for Java · [tree-sitter](https://tree-sitter.github.io/) for Go and Python (both pure-JVM — no external toolchain).
-- **Frontend:** Vite · React · TypeScript · Cytoscape.js (flow/component) · Mermaid (sequence/architecture).
+- **Frontend:** Vite · React · TypeScript · Cytoscape.js (flow/component/architecture/service map) · Mermaid (sequence).
 - **Languages:** **Java, Go, and Python** are parsed into the IR, so all five diagrams work for each. Go and Python classification is naming-convention based rather than annotation-driven, so their Component/Architecture views are shallower than Java's.
 - **Service Map** additionally covers **Node/TypeScript, NestJS, Next.js, and React** by extracting communication primitives (Kafka, REST, gRPC, datastores) with targeted patterns — no full TS AST required.
 
@@ -31,7 +31,7 @@ provider if you configure one (see **[LLM provider](#llm-provider-optional)**).
 ### Interactive Control Flow Graph & Function Explorer
 ![Flow Chart View](docs/screenshots/flow-view.png)
 
-### Layered Architecture & Resource Dependency View
+### Whole-project Architecture View
 ![Architecture View](docs/screenshots/architecture-view.png)
 
 ### Workspace Service Map Topology
@@ -65,7 +65,18 @@ npm run dev            # proxies /api → :8080
 
 Open **<http://localhost:5173>**, paste an absolute source directory, and click **Analyze**.
 
-- Single application → use **Flow Chart / Sequence / Component / Architecture**.
+- Single application → use **Flow Chart / Sequence / Component**.
+- **Architecture**: the folder decides the scope.
+  - A folder with several services shows the **whole project** in columns: front ends, APIs,
+    processing, messaging, data stores, external systems and cloud services.
+  - One service's folder shows **that application**: its components grouped by layer (entry points,
+    business logic, data access), one Kafka box listing its topics, and the services, queues, data
+    stores, external systems and cloud services it connects to. Each connection starts at the layer
+    whose code makes it (found from the file:line evidence). Components by layer need a Java, Go or
+    Python app; for other runtimes the connections attach to the application box.
+  - Each box has an icon for its technology (AWS services, Spring Boot, PostgreSQL, Kafka, React, …).
+    The view exports to PNG, SVG and an editable draw.io file that uses draw.io's own AWS shapes.
+    Icon sources and licences: [`frontend/src/icons/NOTICE.md`](frontend/src/icons/NOTICE.md).
 - A folder that *contains* multiple services → use **Service Map**.
 
 > **Backend on a different port?** Start it with `PORT=8097 java -jar …` and point the
@@ -113,10 +124,16 @@ schemas are in **Swagger UI**.
 | `GET /api/llm-status` | Whether an LLM provider is configured, plus a non-secret label for it. Never returns the API key. |
 | `GET /api/sequence?path=&functionId=&maxDepth=` | Mermaid sequence diagram. Depth 1–20 (default 10). |
 | `GET /api/component?path=` | One app's beans + injection/call dependencies. |
-| `GET /api/architecture?path=` | One app's layers + datastores/topics/externals. |
-| `GET /api/servicemap?path=&exclude=` | Whole-workspace service topology. |
-| `GET /mcp/sse` | **MCP Server** Server-Sent Events stream for AI agents (Cursor, Windsurf, remote agents). |
-| `POST /mcp/message?sessionId=` | **MCP Server** JSON-RPC 2.0 message dispatch endpoint. |
+| `GET /api/architecture?path=&exclude=` | `scope: project` for a folder with several services (columns: front ends, APIs, processing, messaging, data stores, external, cloud). `scope: application` for one service's folder: `app` holds its layers and components, and connections start at the layer group whose code makes them. |
+| `GET /api/servicemap?path=&exclude=` | Whole-workspace service topology. Every edge carries a `confidence` and file:line `evidence`. |
+| `POST /mcp` | **MCP Server** Streamable HTTP transport (protocol 2025-03-26+). |
+| `GET /mcp/sse` | **MCP Server** legacy HTTP+SSE stream (protocol 2024-11-05). |
+| `POST /mcp/message?sessionId=` | **MCP Server** legacy JSON-RPC message endpoint paired with `/mcp/sse`. |
+
+The server binds to `127.0.0.1` by default (`FLOWSCOPE_BIND_ADDRESS` to change it). Set
+`FLOWSCOPE_ALLOWED_ROOTS` (comma-separated directories) to restrict which paths the API and
+MCP tools may read. Browser requests to the MCP endpoints must come from a loopback origin or
+one listed in `flowscope.cors.allowed-origins`.
 
 Common statuses: **400** missing/invalid `path` · **404** unknown `functionId` ·
 **500** internal / heap exceeded · **504** analysis timed out.
@@ -127,32 +144,41 @@ Common statuses: **400** missing/invalid `path` · **404** unknown `functionId` 
 
 FlowScope runs as a first-class **Model Context Protocol (MCP)** server, enabling AI coding agents (Claude Desktop, Antigravity, Cursor, Windsurf, Cline) to query codebase architecture, trace call graphs, generate Mermaid sequence diagrams, and explore cross-service topologies directly.
 
-### Dual-Transport Support
+### Transports
 
-1. **STDIO Transport** (for desktop AI assistants launching FlowScope as a subprocess):
+1. **STDIO** (desktop AI assistants launching FlowScope as a subprocess):
    ```bash
    java -jar backend/target/flowscope-web.jar --mcp
    ```
+   With `--mcp` no web server starts, so no network port opens. Add `--mcp-http` to also
+   serve the HTTP endpoints below (bound to `127.0.0.1`).
 
-2. **HTTP/SSE Transport** (for web & networked AI agents when FlowScope backend is running):
-   Connect your MCP client to:
+2. **Streamable HTTP** (protocol 2025-03-26 and later) when the backend runs as a web server:
    ```
-   http://localhost:8080/mcp/sse
+   http://127.0.0.1:8080/mcp
    ```
+
+3. **Legacy HTTP+SSE** (protocol 2024-11-05 clients): `http://127.0.0.1:8080/mcp/sse`.
+
+`initialize` answers with the client's requested protocol version when it is one of
+2025-06-18, 2025-03-26 or 2024-11-05.
 
 ### Available MCP Tools
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `flowscope_analyze` | `path` | Index and parse a codebase into IR nodes, edges, and function CFGs. |
+| `flowscope_analyze` | `path`, `format?` | Modules, languages, counts and entry points with their `functionId`s (`format=json` for the whole IR). |
+| `flowscope_find_entry_points` | `path`, `query?` | Endpoints and functions matching a path/name, with the `functionId` for the flow tools. |
 | `flowscope_flow` | `path`, `functionId`, `maxDepth?` | Get inter-procedural CFG with inlined callee methods. |
 | `flowscope_flow_description` | `path`, `functionId`, `maxDepth?` | Step-by-step human-readable execution walkthrough. |
 | `flowscope_sequence` | `path`, `functionId`, `maxDepth?` | Complete Mermaid `sequenceDiagram` markdown with participant list. |
 | `flowscope_component` | `path` | Spring beans classified by layer with dependency injection & call edges. |
-| `flowscope_architecture` | `path` | Layered architecture view with datastores, Kafka topics, and external APIs. |
-| `flowscope_servicemap` | `path`, `exclude?` | Multi-service workspace topology across Java, Go, Python, and TypeScript. |
+| `flowscope_architecture` | `path`, `exclude?`, `format?` | Project folder: services by role, queues, data stores, external and cloud services, and their connections. One service's folder: that application's layers and components, its Kafka topics, and what each layer connects to. Default `summary`, or `json`. |
+| `flowscope_servicemap` | `path`, `exclude?`, `format?`, `service?`, `kind?`, `confidence?` | Workspace topology. Default `summary`: one line per edge, `source -kind-> target label [confidence] file:line`. Also `mermaid` and compact `json`. |
 | `flowscope_business_logic` | `path`, `functionId`, `maxDepth?` | Narrative explanation of business intent, rules enforced, and phases. |
 | `flowscope_llm_status` | none | Check whether an external LLM is configured for narrative generation. |
+
+JSON results are compact (not pretty-printed) to fit agent tool-output limits.
 
 ### Configuration Example (`claude_desktop_config.json`)
 
@@ -163,12 +189,61 @@ FlowScope runs as a first-class **Model Context Protocol (MCP)** server, enablin
       "command": "java",
       "args": [
         "-jar",
-        "/path/to/Flowscope/backend/target/flowscope-web.jar",
+        "<FLOWSCOPE_HOME>/backend/target/flowscope-web.jar",
         "--mcp"
       ]
     }
   }
 }
+```
+
+---
+
+## Reading the service map
+
+Every arrow says how FlowScope knows about it:
+
+| Confidence | Meaning | Drawn as |
+|---|---|---|
+| `declared` | Stated in `flowscope.yml` | solid, thick |
+| `code` | Call site found and its target resolved | solid |
+| `config` | A config value that code reads | dashed |
+| `inferred` | Matched by host/name tokens or URL route | dotted |
+| `unresolved` | A call was found but its target name was not; drawn as a grey placeholder | grey dotted |
+
+Click an arrow to see its evidence (file, line, snippet, and how it was matched). Other rules:
+
+- A URL in config becomes an arrow only when code reads its key. Unread base-url keys are
+  listed in the notes as *configured but never read by code*.
+- A URL that code only formats into strings (links in e-mails, redirects) is a `reference`
+  edge, not a `rest` call.
+- Datastore direction is decided per call (`GetCommand` reads, `PutItemCommand` writes,
+  repository `save` writes, …) and per table; `uses` means the direction is unknown.
+- Test, mock, fixture and non-production environment files (`environment.dev.ts`,
+  `config.stage.js`, …) are ignored.
+- A module that another workspace module depends on, or that isn't packaged as an
+  executable, is a library.
+- A table, bucket or queue passed through helpers is followed to its source: a method
+  parameter to its call sites, a field to the constructor arguments (`super(...)`, `new X(...)`),
+  and a config-object property to the object literals that set it.
+- A Lambda package that exports several handlers shows one node per handler. A handler gets
+  a Kafka topic only when its own code calls the producer method that sends it.
+- Env files for one deployment of a package (`.env.device-prod`, `.env.prod-eu`) count as
+  production config when there is no plain `.env.prod`.
+
+### Override file (`flowscope.yml`)
+
+Put an optional `flowscope.yml` at the workspace root for facts that live outside the code.
+Edges it adds have confidence `declared` and point back at the file.
+
+```yaml
+hosts:            # host or host+path → service or external system
+  api.example.com/admin/*: reports-dashboard
+triggers:         # service[:handler] → topics / queues / schedule
+  orders-lambda:commandConsumer: { consumes: [orders-commands] }
+externals:        # host or host+path → system name
+  partner.example.com: Partner Billing API
+ignore: [legacy/, sandbox/]
 ```
 
 ---

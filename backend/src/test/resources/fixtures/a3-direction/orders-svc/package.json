@@ -1,0 +1,5 @@
+{
+  "name": "orders-svc",
+  "scripts": {"start": "node dist/index.js"},
+  "dependencies": {}
+}

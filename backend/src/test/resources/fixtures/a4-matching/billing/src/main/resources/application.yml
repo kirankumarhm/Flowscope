@@ -1,0 +1,4 @@
+reports:
+  base-url: https://reports.example.com/admin/api
+app:
+  base-url: https://orders.example.com

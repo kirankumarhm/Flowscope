@@ -1,0 +1,3 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://db-host:5432/orders

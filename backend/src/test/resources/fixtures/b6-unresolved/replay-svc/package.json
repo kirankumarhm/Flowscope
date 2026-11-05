@@ -1,0 +1,5 @@
+{
+  "name": "replay-svc",
+  "scripts": {"start": "node dist/index.js"},
+  "dependencies": {}
+}

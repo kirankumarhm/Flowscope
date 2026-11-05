@@ -1,0 +1,5 @@
+{
+  "name": "resolver-svc",
+  "scripts": {"start": "node dist/index.js"},
+  "dependencies": {}
+}

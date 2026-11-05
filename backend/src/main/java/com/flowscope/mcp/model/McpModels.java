@@ -1,9 +1,11 @@
 package com.flowscope.mcp.model;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 import java.util.Map;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 
 /**
  * Model Context Protocol (MCP) version 2024-11-05 / JSON-RPC 2.0 data models.
@@ -14,7 +16,12 @@ public final class McpModels {
     }
 
     public static final String JSONRPC_VERSION = "2.0";
+    /** Answered when the client does not state a version. */
     public static final String PROTOCOL_VERSION = "2024-11-05";
+    /** Protocol versions this server can speak, newest first. It uses only tools,
+     *  resources and prompts, whose shape is the same across these revisions. */
+    public static final List<String> SUPPORTED_PROTOCOL_VERSIONS = List.of(
+            "2025-06-18", "2025-03-26", "2024-11-05");
     public static final String SERVER_NAME = "flowscope";
     public static final String SERVER_VERSION = "0.1.0";
 
@@ -135,12 +142,13 @@ public final class McpModels {
             List<String> required) {
     }
 
+    /** A JSON Schema property: serialized with the schema keywords {@code default} and {@code enum}. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record ParameterProperty(
             String type,
             String description,
-            Object defaultValue,
-            List<String> enums) {
+            @JsonProperty("default") Object defaultValue,
+            @JsonProperty("enum") List<String> enums) {
 
         public static ParameterProperty of(String type, String description) {
             return new ParameterProperty(type, description, null, null);
@@ -148,6 +156,10 @@ public final class McpModels {
 
         public static ParameterProperty of(String type, String description, Object defaultValue) {
             return new ParameterProperty(type, description, defaultValue, null);
+        }
+
+        public static ParameterProperty ofEnum(String description, String defaultValue, List<String> values) {
+            return new ParameterProperty("string", description, defaultValue, values);
         }
     }
 

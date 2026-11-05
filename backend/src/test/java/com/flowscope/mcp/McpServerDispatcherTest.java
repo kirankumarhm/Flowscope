@@ -1,8 +1,17 @@
 package com.flowscope.mcp;
 
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import static org.mockito.Mockito.when;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.flowscope.dto.BusinessLogic;
 import com.flowscope.mcp.model.McpModels;
 import com.flowscope.mcp.model.McpModels.CallToolResult;
 import com.flowscope.mcp.model.McpModels.InitializeResult;
@@ -15,16 +24,6 @@ import com.flowscope.service.BusinessLogicService;
 import com.flowscope.service.FlowDescriptionService;
 import com.flowscope.service.FlowService;
 import com.flowscope.service.ServiceMapService;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
-
-import java.util.List;
-import java.util.Map;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.when;
 
 class McpServerDispatcherTest {
 
@@ -51,6 +50,7 @@ class McpServerDispatcherTest {
                 descriptionService,
                 serviceMapService,
                 businessLogicService,
+                Mockito.mock(com.flowscope.service.ArchitectureService.class),
                 objectMapper);
 
         dispatcher = new McpServerDispatcher(toolHandler, objectMapper);
@@ -73,7 +73,30 @@ class McpServerDispatcherTest {
     }
 
     @Test
-    @DisplayName("tools/list returns all 9 FlowScope analysis tools")
+    @DisplayName("initialize answers a supported requested version and falls back to the newest otherwise")
+    void testVersionNegotiation() {
+        JsonNode newer = objectMapper.createObjectNode().put("protocolVersion", "2025-06-18");
+        InitializeResult a = (InitializeResult) ((JsonRpcResponse) dispatcher.dispatch(
+                new JsonRpcRequest("2.0", 1, "initialize", newer))).result();
+        assertThat(a.protocolVersion()).isEqualTo("2025-06-18");
+
+        JsonNode unknown = objectMapper.createObjectNode().put("protocolVersion", "2099-01-01");
+        InitializeResult b = (InitializeResult) ((JsonRpcResponse) dispatcher.dispatch(
+                new JsonRpcRequest("2.0", 2, "initialize", unknown))).result();
+        assertThat(b.protocolVersion()).isEqualTo(McpModels.SUPPORTED_PROTOCOL_VERSIONS.get(0));
+    }
+
+    @Test
+    @DisplayName("tool schemas use the JSON Schema keywords 'default' and 'enum'")
+    void testSchemaKeywords() throws Exception {
+        String json = objectMapper.writeValueAsString(dispatcher.dispatch(
+                new JsonRpcRequest("2.0", 9, "tools/list", null)));
+        assertThat(json).contains("\"enum\":[").contains("\"default\":").doesNotContain("\"enums\"")
+                .doesNotContain("\"defaultValue\"");
+    }
+
+    @Test
+    @DisplayName("tools/list returns all 10 FlowScope analysis tools")
     void testToolsList() {
         JsonRpcRequest request = new JsonRpcRequest("2.0", 2, "tools/list", null);
         Object response = dispatcher.dispatch(request);
@@ -86,7 +109,7 @@ class McpServerDispatcherTest {
 
         @SuppressWarnings("unchecked")
         List<?> tools = (List<?>) result.get("tools");
-        assertThat(tools).hasSize(9);
+        assertThat(tools).hasSize(10);
     }
 
     @Test

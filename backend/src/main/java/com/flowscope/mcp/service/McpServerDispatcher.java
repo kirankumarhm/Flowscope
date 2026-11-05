@@ -1,18 +1,32 @@
 package com.flowscope.mcp.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.flowscope.mcp.model.McpModels;
-import com.flowscope.mcp.model.McpModels.*;
+import java.util.List;
+import java.util.Map;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.Map;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.flowscope.mcp.model.McpModels;
+import com.flowscope.mcp.model.McpModels.CallToolResult;
+import com.flowscope.mcp.model.McpModels.GetPromptResult;
+import com.flowscope.mcp.model.McpModels.Implementation;
+import com.flowscope.mcp.model.McpModels.InitializeResult;
+import com.flowscope.mcp.model.McpModels.JsonRpcErrorResponse;
+import com.flowscope.mcp.model.McpModels.JsonRpcRequest;
+import com.flowscope.mcp.model.McpModels.JsonRpcResponse;
+import com.flowscope.mcp.model.McpModels.PromptDefinition;
+import com.flowscope.mcp.model.McpModels.ReadResourceResult;
+import com.flowscope.mcp.model.McpModels.ResourceDefinition;
+import com.flowscope.mcp.model.McpModels.ServerCapabilities;
+import com.flowscope.mcp.model.McpModels.TextContent;
+import com.flowscope.mcp.model.McpModels.ToolDefinition;
 
 /**
- * Core JSON-RPC 2.0 message dispatcher implementing the Model Context Protocol (v2024-11-05).
+ * Core JSON-RPC 2.0 message dispatcher implementing the Model Context Protocol
+ * (2024-11-05 through 2025-06-18; see {@link #negotiate}).
  */
 @Service
 public class McpServerDispatcher {
@@ -75,8 +89,24 @@ public class McpServerDispatcher {
                 new ServerCapabilities.PromptsCapability(false));
 
         Implementation serverInfo = new Implementation(McpModels.SERVER_NAME, McpModels.SERVER_VERSION);
-        InitializeResult result = new InitializeResult(McpModels.PROTOCOL_VERSION, capabilities, serverInfo);
+        InitializeResult result = new InitializeResult(negotiate(params), capabilities, serverInfo);
         return JsonRpcResponse.success(id, result);
+    }
+
+    /**
+     * Version negotiation: answer with the client's requested version when this
+     * server supports it, otherwise with the newest version it supports (the client
+     * then decides whether to continue). No requested version → the 2024-11-05 baseline.
+     */
+    static String negotiate(JsonNode params) {
+        if (params == null || !params.hasNonNull("protocolVersion")) {
+            return McpModels.PROTOCOL_VERSION;
+        }
+        String requested = params.get("protocolVersion").asText();
+        if (McpModels.SUPPORTED_PROTOCOL_VERSIONS.contains(requested)) {
+            return requested;
+        }
+        return McpModels.SUPPORTED_PROTOCOL_VERSIONS.get(0);
     }
 
     private JsonRpcResponse handleToolsList(Object id) {
@@ -169,7 +199,7 @@ public class McpServerDispatcher {
                     Please review the architecture of the application at: %s
 
                     Steps to execute:
-                    1. Call `flowscope_architecture` to retrieve layers, datastores, Kafka topics, and external dependencies.
+                    1. Call `flowscope_architecture` to see the whole project: its services, queues, data stores, external systems and how they connect.
                     2. Call `flowscope_component` to inspect Spring beans, layer classifications, and injection/call graphs.
                     3. Assess architectural layering integrity, identifying high fan-in/fan-out classes or anomalous dependencies.
                     """.formatted(path);

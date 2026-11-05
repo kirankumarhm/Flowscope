@@ -3,6 +3,8 @@ package com.flowscope.dto;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 /**
  * The service-to-service topology of a whole workspace of applications. Unlike
  * the Flow Chart / Sequence diagrams (which trace one function inside one app),
@@ -26,7 +28,7 @@ public record ServiceMap(
      *                {@code ds:<kind>:<name>}, {@code ext:<name>})
      * @param label   human-readable name shown on the node
      * @param type    {@code service} | {@code topic} | {@code datastore} |
-     *                {@code external} | {@code ui}
+     *                {@code external} | {@code ui} | {@code grpc} | {@code trigger}
      * @param subtype finer classification, e.g. {@code spring-boot},
      *                {@code node-lambda}, {@code react}, {@code dynamodb},
      *                {@code s3}, {@code sqs}, {@code kafka}
@@ -48,16 +50,43 @@ public record ServiceMap(
      * A directed communication edge, oriented along the data-flow direction so
      * arrows read naturally (producer → topic → consumer, service → datastore).
      *
-     * @param kind  {@code produces} | {@code consumes} | {@code rest} |
-     *              {@code reads} | {@code writes}
-     * @param label edge annotation (topic name, HTTP verb/path, table name)
+     * @param kind       {@code produces} | {@code consumes} | {@code rest} |
+     *                   {@code soap} | {@code grpc} | {@code reads} | {@code writes} |
+     *                   {@code uses} (direction unknown, or an SDK-level dependency) |
+     *                   {@code reference} (URL only used to build links, not called)
+     * @param label      edge annotation (topic name, HTTP verb/path, table name)
+     * @param confidence how the edge was established, strongest first:
+     *                   {@code declared} (override file) | {@code code} (call site
+     *                   found and resolved) | {@code config} (referenced config value) |
+     *                   {@code inferred} (name, host or route match) |
+     *                   {@code unresolved} (placeholder for a name FlowScope could not resolve)
+     * @param evidence   where the edge comes from, so a reader can check it
      */
     public record Edge(
             String id,
             String source,
             String target,
             String kind,
-            String label) {
+            String label,
+            String confidence,
+            @JsonInclude(JsonInclude.Include.NON_EMPTY) List<Evidence> evidence) {
+
+        public Edge(String id, String source, String target, String kind, String label) {
+            this(id, source, target, kind, label, null, List.of());
+        }
+    }
+
+    /**
+     * One piece of evidence behind an edge.
+     *
+     * @param file    path relative to {@link ServiceMap#workspace()} (or the analyzed app)
+     * @param line    1-based line number, or 0 when not applicable
+     * @param snippet the trimmed source/config line
+     * @param via     {@code code}, {@code config key <key>}, {@code name match <token>},
+     *                {@code route match <path>}, {@code declared}, …
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record Evidence(String file, int line, String snippet, String via) {
     }
 
     /** Summary counts plus human-readable notes about what could not be resolved. */

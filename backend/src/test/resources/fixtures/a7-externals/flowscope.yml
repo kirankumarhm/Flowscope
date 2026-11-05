@@ -1,0 +1,3 @@
+externals:
+  api.corp.io/billing/*: Billing System
+  api.corp.io/identity/*: Identity Service
